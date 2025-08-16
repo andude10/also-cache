@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod meta_pool;
 
 #[cfg(test)]
 mod tests {
