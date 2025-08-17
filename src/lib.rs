@@ -4,11 +4,11 @@ pub mod cache;
 mod tests {
     use serde_derive::{Deserialize, Serialize};
 
-    use crate::cache::{Cache, CacheError};
+    use crate::cache::{AlsoCache, CacheError};
 
     #[test]
     fn test_insert_and_get() {
-        let mut cache = Cache::new(2000); // size in bytes
+        let mut cache = AlsoCache::new(2000); // size in bytes
 
         let key1 = "test_key".to_string();
         let val_str = "some value of type String".to_string();
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn test_many_inserts_and_gets() {
-        let mut cache = Cache::new(2000); // size in bytes
+        let mut cache = AlsoCache::new(2000); // size in bytes
 
         for i in 0..10000 {
             let key = format!("key_{}", i);
@@ -74,5 +74,6 @@ mod tests {
 
         assert!(found_count > 0, "At least some keys should be found");
         println!("Total keys found: {}", found_count);
+        assert!(found_count == 137, "Expected 137 keys to be found"); //TODO: remove this assert / make more reasonable
     }
 }

@@ -43,9 +43,9 @@ A: ¯\_(ツ)\_/¯ (maybe ensure broadcast is sent in each update/delete operatio
 Q: How new node loads cache at start-up?
 A: ¯\_(ツ)\_/¯
 
-Current tasks:
+### References
 
-- figure out cache replication
-- figure out cache eviction (SIEVE cache?)
-- figure out cache consistency with database
-- figure out horizontal scaling
+The implementation is heavily inspired by:
+
+- [quick_cache](https://github.com/arthurprs/quick-cache)
+- [hiqlite](https://github.com/sebadob/hiqlite)
