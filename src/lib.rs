@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod cache_nodes_arena;
 
 #[cfg(test)]
 mod tests {
