@@ -55,7 +55,7 @@ mod tests {
             let value = format!("value_{}", i);
             cache.insert(key, &value).expect("insert should succeed");
 
-            for j in 5..50 {
+            for j in 0..50 {
                 let key = format!("key_{}", j);
                 let _: Result<String, CacheError> = cache.get(&key);
             }
@@ -68,12 +68,16 @@ mod tests {
             let key = format!("key_{}", i);
             if let Ok(_) = cache.get::<String>(&key) {
                 found_count += 1;
-                println!("Found key: {}", key);
+                //println!("Found key: {}", key);
+            } else {
+                let value = format!("value_{}", i);
+                let _ = cache.insert(key.clone(), &value);
+                let _ = cache.get::<String>(&key);
             }
         }
 
         assert!(found_count > 0, "At least some keys should be found");
         println!("Total keys found: {}", found_count);
-        assert!(found_count == 137, "Expected 137 keys to be found"); //TODO: remove this assert / make more reasonable
+        assert!(found_count == 50, "Expected 50 keys to be found"); //TODO: remove this assert / make more reasonable
     }
 }

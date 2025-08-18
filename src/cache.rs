@@ -12,6 +12,7 @@ struct Node {
     next: usize,
     prev: usize,
     data: Vec<u8>,
+    data_size: usize,
     frequency: u16,
     fifo: FifoName,
 }
@@ -79,8 +80,8 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
             main_head: None,
             ghost_head: None,
             small_threshold: (size as f64 * 0.1) as usize,
-            main_threshold: size - (size as f64 * 0.5) as usize,
-            ghost_threshold: (size as f64 * 0.4) as usize,
+            main_threshold: (size as f64 * 0.9) as usize,
+            ghost_threshold: (size as f64 * 0.9) as usize,
             small_size: 0,
             main_size: 0,
             ghost_size: 0,
@@ -102,16 +103,38 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
     pub fn get_bytes(&mut self, key: &Key) -> Option<&Vec<u8>> {
         let hash = self.hasher.hash_one(key);
         let node_idx: usize = *self.map.find(hash, |&idx| self.nodes_keys[idx] == *key)?;
-        self.node_read(node_idx);
-        Some(&self.nodes[node_idx].data)
+
+        if self.nodes[node_idx].frequency < 3 {
+            self.nodes[node_idx].frequency += 1;
+        }
+
+        if self.nodes[node_idx].fifo != FifoName::Ghost {
+            Some(&self.nodes[node_idx].data)
+        } else {
+            None
+        }
     }
 
     pub fn insert_bytes(&mut self, key: Key, val: Vec<u8>) {
         let hash = self.hasher.hash_one(&key);
 
+        if let Some(&existing_idx) = self.map.find(hash, |&idx| self.nodes_keys[idx] == key) {
+            self.nodes[existing_idx].data = val;
+            if self.nodes[existing_idx].frequency < 3 {
+                self.nodes[existing_idx].frequency += 1;
+            }
+            // if key is in ghost, put data into it and promote to main queue
+            if self.nodes[existing_idx].fifo == FifoName::Ghost {
+                self.node_advance(existing_idx, FifoName::Main, false);
+            }
+            return;
+        }
+
+        // if no node with the hash was found, create new node
         let node = Node {
             next: 0,
             prev: 0,
+            data_size: self.weighter.weight(&val),
             data: val,
             frequency: 0,
             fifo: FifoName::Small,
@@ -131,45 +154,46 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
         self.nodes[idx].prev = idx;
 
         self.map.insert_unique(hash, idx, |_| hash);
-        self.node_advance(FifoName::Small, idx);
+        self.node_advance(idx, FifoName::Small, true);
     }
 
-    fn node_read(&mut self, node_idx: usize) {
-        assert!(
-            self.nodes[node_idx].next != usize::MAX,
-            "Expect valid index in node_read"
-        );
-        let node = &mut self.nodes[node_idx];
-        if node.fifo == FifoName::Ghost {
-            self.node_advance(FifoName::Main, node_idx);
-        } else if node.frequency < 3 {
-            node.frequency += 1;
+    // TODO: so currently the solution is kind of works, but the flow and state mutations are
+    // really ambiguous, because of recursion calls depending on the exact state of the cache
+    // (like was some node unlinked before / size subtracted/etc. This requires rewrite)
+    fn node_advance(&mut self, node_idx: usize, queue_name: FifoName, new_node: bool) {
+        if !new_node {
+            // check if the node was the head of its current queue
+            // if yes, update the head to the next node
+            match self.nodes[node_idx].fifo {
+                FifoName::Small => {
+                    if self.small_head == Some(node_idx) {
+                        self.small_head = Some(self.nodes[node_idx].prev);
+                    }
+                }
+                FifoName::Main => {
+                    if self.main_head == Some(node_idx) {
+                        self.main_head = Some(self.nodes[node_idx].prev);
+                    }
+                }
+                FifoName::Ghost => {
+                    if self.ghost_head == Some(node_idx) {
+                        self.ghost_head = Some(self.nodes[node_idx].prev);
+                    }
+                }
+            }
+
+            // unlink node from its current queue
+            self.unlink_from_queue(node_idx);
         }
-    }
 
-    fn node_advance(&mut self, queue_name: FifoName, node_idx: usize) {
-        assert!(
-            self.nodes[node_idx].next != usize::MAX,
-            "Expect valid index in node_advance"
-        );
-
-        // evict an item if the queue exceeds its threshold
-        let (size, threshold) = match queue_name {
-            FifoName::Small => (self.small_size, self.small_threshold),
-            FifoName::Main => (self.main_size, self.main_threshold),
-            FifoName::Ghost => (self.ghost_size, self.ghost_threshold),
-        };
-        if size > threshold {
-            self.node_evict(queue_name);
+        // TODO: ugly
+        if queue_name == FifoName::Ghost {
+            // drop data from node which goes into ghost (data will be inserted again if this node is accessed):
+            self.nodes[node_idx].data = Vec::new();
         }
 
-        // increment queue size by the node's weigh
-        let size = match queue_name {
-            FifoName::Small => &mut self.small_size,
-            FifoName::Main => &mut self.main_size,
-            FifoName::Ghost => &mut self.ghost_size,
-        };
-        *size += self.weighter.weight(&self.nodes[node_idx].data);
+        // set the node's fifo to the new queue
+        self.nodes[node_idx].fifo = queue_name;
 
         // insert node at the front of the queue
         let head = match queue_name {
@@ -180,95 +204,127 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
         if let Some(head_idx) = *head {
             self.put_into_queue(node_idx, head_idx);
         } else {
-            *head = Some(node_idx);
+            *head = Some(node_idx); // TODO: ugly
+            match queue_name {
+                FifoName::Small => self.small_size += self.nodes[node_idx].data_size,
+                FifoName::Main => self.main_size += self.nodes[node_idx].data_size,
+                FifoName::Ghost => self.ghost_size += self.nodes[node_idx].data_size,
+            }
         }
 
-        self.nodes[node_idx].fifo = queue_name;
+        // evict if the queue exceeds its threshold after insertion
+        let (size, threshold) = match queue_name {
+            FifoName::Small => (self.small_size, self.small_threshold),
+            FifoName::Main => (self.main_size, self.main_threshold),
+            FifoName::Ghost => (self.ghost_size, self.ghost_threshold),
+        };
+
+        // introduce batching instead
+        if size > threshold {
+            self.node_evict(queue_name);
+        }
     }
 
-    // TODO: make more straightforward
     fn node_evict(&mut self, queue_name: FifoName) {
-        let (mut size, threshold, ind) = match queue_name {
+        let (mut size, threshold, head) = match queue_name {
             FifoName::Small => (self.small_size, self.small_threshold, self.small_head),
             FifoName::Main => (self.main_size, self.main_threshold, self.main_head),
             FifoName::Ghost => (self.ghost_size, self.ghost_threshold, self.ghost_head),
         };
-        let mut next_idx = ind.expect("head to exist when evicting");
-        let mut old_head_idx;
+        let mut head = head.expect("head to exist when evicting");
 
         while size > threshold {
-            assert!(
-                self.nodes[next_idx].next != usize::MAX,
-                "Expect valid index while evicting"
-            );
-
-            // if the head is the only node in the queue, exit
-            if self.nodes[next_idx].prev == self.nodes[next_idx].next
-                && self.nodes[next_idx].next == next_idx
-            {
+            // if the head is the only node in the queue, drop it and exit
+            if self.nodes[head].prev == head && self.nodes[head].next == head {
                 match queue_name {
-                    FifoName::Small => {
-                        self.small_head = None;
-                        self.small_size = 0;
-                    }
-                    FifoName::Main => {
-                        self.main_head = None;
-                        self.main_size = 0;
-                    }
-                    FifoName::Ghost => {
-                        self.ghost_head = None;
-                        self.ghost_size = 0;
-                    }
+                    FifoName::Small => self.small_head = None,
+                    FifoName::Main => self.main_head = None,
+                    FifoName::Ghost => self.ghost_head = None,
                 }
-                self.drop_node(next_idx);
+                self.drop_node(head);
                 break;
             }
 
-            // make previous node the new head
-            let prev_node = self.nodes[next_idx].prev;
+            // make the second oldest node a new head (prev of head)
+            let new_head = self.nodes[head].prev;
             match queue_name {
-                FifoName::Small => {
-                    self.small_head = Some(prev_node);
-                }
-                FifoName::Main => {
-                    self.main_head = Some(prev_node);
-                }
-                FifoName::Ghost => {
-                    self.ghost_head = Some(prev_node);
-                }
+                FifoName::Small => self.small_head = Some(new_head),
+                FifoName::Main => self.main_head = Some(new_head),
+                FifoName::Ghost => self.ghost_head = Some(new_head),
             }
-            old_head_idx = next_idx;
-            next_idx = prev_node;
 
             // advance or remove old head
-            self.unlink_from_queue(old_head_idx);
-            match (queue_name, self.nodes[old_head_idx].frequency > 0) {
+            match (queue_name, self.nodes[head].frequency > 0) {
                 (FifoName::Small, true) => {
-                    self.nodes[old_head_idx].frequency -= 1;
-                    self.small_size -= self.weighter.weight(&self.nodes[old_head_idx].data);
-                    self.node_advance(FifoName::Main, old_head_idx);
+                    self.nodes[head].frequency = 0;
+                    self.node_advance(head, FifoName::Main, false);
                 }
                 (FifoName::Small, false) => {
-                    self.small_size -= self.weighter.weight(&self.nodes[old_head_idx].data);
-                    self.node_advance(FifoName::Ghost, old_head_idx);
+                    self.node_advance(head, FifoName::Ghost, false);
                 }
                 (FifoName::Ghost, true) => {
-                    self.nodes[old_head_idx].frequency -= 1;
-                    self.ghost_size -= self.weighter.weight(&self.nodes[old_head_idx].data);
-                    self.node_advance(FifoName::Main, old_head_idx);
+                    self.nodes[head].frequency = 0;
+                    self.node_advance(head, FifoName::Main, false);
                 }
                 (FifoName::Ghost, false) => {
-                    self.ghost_size -= self.weighter.weight(&self.nodes[old_head_idx].data);
-                    self.drop_node(old_head_idx);
+                    self.unlink_from_queue(head);
+                    self.drop_node(head);
                 }
                 (FifoName::Main, true) => {
-                    self.nodes[old_head_idx].frequency -= 1;
-                    // main queue size does not change
-                    self.put_into_queue(old_head_idx, prev_node);
+                    self.nodes[head].frequency -= 1;
+                    self.unlink_from_queue(head);
+                    self.put_into_queue(head, new_head);
                 }
                 (FifoName::Main, false) => {
-                    self.main_size -= self.weighter.weight(&self.nodes[old_head_idx].data);
-                    self.drop_node(old_head_idx);
+                    self.unlink_from_queue(head);
+                    self.drop_node(head);
+                    // if let Some(head_idx) = self.ghost_head {
+                    //     if self.nodes[head_idx].next == usize::MAX {
+                    //         eprintln!();
+                    //         eprintln!("AlsoCache state:");
+                    //         eprintln!("  small_head: {:?}", self.small_head);
+                    //         eprintln!("  main_head: {:?}", self.main_head);
+                    //         eprintln!("  ghost_head: {:?}", self.ghost_head);
+                    //         eprintln!();
+                    //         eprintln!("  small_threshold: {}", self.small_threshold);
+                    //         eprintln!("  main_threshold: {}", self.main_threshold);
+                    //         eprintln!("  ghost_threshold: {}", self.ghost_threshold);
+                    //         eprintln!();
+                    //         eprintln!("  small_size: {}", self.small_size);
+                    //         eprintln!("  main_size: {}", self.main_size);
+                    //         eprintln!("  ghost_size: {}", self.ghost_size);
+                    //         eprintln!();
+                    //         eprintln!("  nodes.len(): {}", self.nodes.len());
+                    //         eprintln!("  nodes_freelist: {:?}", self.nodes_freelist);
+                    //         eprintln!("  nodes_keys.len(): {}", self.nodes_keys.len());
+                    //         eprintln!("  map.len(): {}", self.map.len());
+                    //         eprintln!();
+                    //         eprintln!("  Nodes:");
+                    //         for (i, node) in self.nodes.iter().enumerate() {
+                    //             if i == 711 || i == 158 || i == 1682 || i == 342 {
+                    //                 eprintln!(
+                    //                     "    [{}] next: {}, prev: {}, data_size: {}, frequency: {}, fifo: {:?}",
+                    //                     i,
+                    //                     node.next,
+                    //                     node.prev,
+                    //                     node.data_size,
+                    //                     node.frequency,
+                    //                     node.fifo
+                    //                 );
+                    //             }
+                    //         }
+                    //         eprintln!();
+                    //         eprint!(
+                    //             " head_idx: {}, head: {}, new_head: {}",
+                    //             head, head_idx, new_head
+                    //         );
+
+                    //         panic!(
+                    //             "Ghost head index must be valid in 7, {}",
+                    //             head == head_idx && head != new_head
+                    //         );
+                    //     }
+                    // }
                 }
             }
 
@@ -277,6 +333,7 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
                 FifoName::Main => self.main_size,
                 FifoName::Ghost => self.ghost_size,
             };
+            head = new_head;
         }
     }
 
@@ -292,6 +349,7 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
             next: usize::MAX, // set to usize::MAX so any use as an index will panic
             prev: usize::MAX,
             data: Vec::new(),
+            data_size: 0,
             frequency: 0,
             fifo: FifoName::Small,
         };
@@ -301,6 +359,14 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
     }
 
     fn unlink_from_queue(&mut self, node_idx: usize) {
+        // decrement the size of the queue
+        let size = match self.nodes[node_idx].fifo {
+            FifoName::Small => &mut self.small_size,
+            FifoName::Main => &mut self.main_size,
+            FifoName::Ghost => &mut self.ghost_size,
+        };
+        *size -= self.nodes[node_idx].data_size;
+
         // link the previous and next to each other
         let node = &mut self.nodes[node_idx];
         let prev_idx = node.prev;
@@ -314,6 +380,15 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
     }
 
     fn put_into_queue(&mut self, node_idx: usize, head_idx: usize) {
+        // increment the size of the head's queue
+        let size = match self.nodes[head_idx].fifo {
+            FifoName::Small => &mut self.small_size,
+            FifoName::Main => &mut self.main_size,
+            FifoName::Ghost => &mut self.ghost_size,
+        };
+        *size += self.nodes[node_idx].data_size;
+
+        // link the node to the head of the queue
         let tail_idx = self.nodes[head_idx].next;
         self.nodes[tail_idx].prev = node_idx;
         self.nodes[node_idx].prev = head_idx;
@@ -356,6 +431,9 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
                     count += 1;
                     if idx == start {
                         break;
+                    }
+                    if count > 10_000 {
+                        panic!("Too many elements in queue, something is wrong");
                     }
                 }
                 // if more than one element, show as: 87 -> 90 -> 89 -*> 87

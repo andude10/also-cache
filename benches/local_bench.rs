@@ -1,3 +1,8 @@
+// This benchmark borrowed from `quick_cache` crate
+// https://github.com/arthurprs/quick-cache/blob/master/benches/benchmarks.rs
+
+use std::mem;
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand::prelude::*;
 use rand_distr::Zipf;
@@ -12,7 +17,7 @@ pub fn r_benchmark(c: &mut Criterion) {
             let mut g = c.benchmark_group(format!("Reads N={} S={}", max_cache_size, s));
             g.throughput(criterion::Throughput::Elements(N_SAMPLES as u64));
             g.bench_function(format!("qc {}", max_cache_size), |b| {
-                let mut cache = AlsoCache::new(max_cache_size);
+                let mut cache = AlsoCache::new(max_cache_size * mem::size_of::<usize>()); // original benchmark passed total number of elements, but we pass total size in bytes.
                 let mut samples = (0usize..max_cache_size).collect::<Vec<_>>();
                 let mut rng = SmallRng::seed_from_u64(1);
                 samples.shuffle(&mut rng);
@@ -47,7 +52,7 @@ pub fn rw_benchmark(c: &mut Criterion) {
                         || {
                             let mut rng = SmallRng::seed_from_u64(1);
                             let dist = Zipf::new(max_cache_size, s).unwrap();
-                            let mut cache = AlsoCache::new(capacity);
+                            let mut cache = AlsoCache::new(capacity * mem::size_of::<usize>()); // original benchmark passed total number of elements, but we pass total size in bytes.
                             for _ in 0..max_cache_size as usize * 3 {
                                 let sample = dist.sample(&mut rng) as usize;
                                 let _ = cache.insert(sample, &sample);
@@ -68,12 +73,12 @@ pub fn rw_benchmark(c: &mut Criterion) {
                         },
                         criterion::BatchSize::LargeInput,
                     );
-                    // eprintln!("Hit rate {:?}", _hits as f64 / (_hits + _misses) as f64);
+                    eprintln!("Hit rate {:?}", hits as f64 / (hits + misses) as f64);
                 });
             }
         }
     }
 }
 
-criterion_group!(benches, r_benchmark, rw_benchmark);
+criterion_group!(benches, rw_benchmark);
 criterion_main!(benches);
