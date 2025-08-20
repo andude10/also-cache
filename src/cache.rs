@@ -1,5 +1,6 @@
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 
+use ahash::RandomState;
 use bincode::{
     config::standard,
     error::{DecodeError, EncodeError},
@@ -9,8 +10,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::cache_nodes_arena::NodeArena;
 
 #[derive(Debug)]
-pub struct AlsoCache<Key, We> {
-    arena: NodeArena<Key>,
+pub struct AlsoCache<Key, We, B> {
+    arena: NodeArena<Key, B>,
     weighter: We,
 }
 
@@ -34,22 +35,26 @@ pub enum CacheError {
     KeyNotFound,
 }
 
-impl<Key: Eq + Hash, We: Weighter> AlsoCache<Key, We> {
-    pub fn with(size: usize, weighter: We) -> Self {
+impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
+    pub fn with(size: usize, weighter: We, hasher: B) -> Self {
         AlsoCache {
             arena: NodeArena::new(
                 (size as f64 * 0.1) as usize,
                 (size as f64 * 0.9) as usize,
                 (size as f64 * 0.6) as usize,
+                hasher,
             ),
             weighter,
         }
     }
+
+    #[inline(always)]
     pub fn get<V: DeserializeOwned>(&mut self, key: &Key) -> Result<V, CacheError> {
         let bytes = self.arena.get_bytes(key).ok_or(CacheError::KeyNotFound)?;
         deserialize(bytes).map_err(CacheError::Decode)
     }
 
+    #[inline(always)]
     pub fn insert<V: Serialize>(&mut self, key: Key, val: &V) -> Result<(), CacheError> {
         let bytes = serialize(val).map_err(CacheError::Encode)?;
         self.arena
@@ -62,10 +67,11 @@ impl<Key: Eq + Hash, We: Weighter> AlsoCache<Key, We> {
     }
 }
 
-impl<Key: Eq + Hash> AlsoCache<Key, DefaultWeighter> {
+impl<Key: Eq + Hash> AlsoCache<Key, DefaultWeighter, RandomState> {
     pub fn new(size: usize) -> Self {
         let weighter = DefaultWeighter;
-        AlsoCache::with(size, weighter)
+        let hasher = RandomState::new();
+        AlsoCache::with(size, weighter, hasher)
     }
 }
 

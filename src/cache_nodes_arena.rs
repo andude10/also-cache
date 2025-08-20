@@ -1,5 +1,5 @@
 use std::hash::BuildHasher;
-use std::{hash::Hash, hash::RandomState, marker::PhantomData};
+use std::{hash::Hash, marker::PhantomData};
 
 use hashbrown::HashTable;
 
@@ -52,10 +52,10 @@ enum QueueHead<Q> {
 }
 
 #[derive(Debug)]
-pub struct NodeArena<Key> {
+pub struct NodeArena<Key, B> {
     map: HashTable<usize>,
     nodes_keys: Vec<Key>,
-    hasher: RandomState,
+    hasher: B,
 
     nodes: Vec<Node>,
     freelist: Vec<NodeRef<NoQueue, Free>>,
@@ -72,12 +72,17 @@ pub struct NodeArena<Key> {
     ghost_head: QueueHead<GhostQueue>,
 }
 
-impl<Key: Eq + Hash> NodeArena<Key> {
-    pub fn new(small_threshold: usize, main_threshold: usize, ghost_threshold: usize) -> Self {
+impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
+    pub fn new(
+        small_threshold: usize,
+        main_threshold: usize,
+        ghost_threshold: usize,
+        hasher: B,
+    ) -> Self {
         Self {
             map: HashTable::new(),
             nodes_keys: Vec::new(),
-            hasher: RandomState::new(),
+            hasher,
             nodes: Vec::new(),
             freelist: Vec::new(),
             small_size: 0,
@@ -109,6 +114,7 @@ impl<Key: Eq + Hash> NodeArena<Key> {
     pub fn insert_bytes(&mut self, key: Key, data_size: usize, data: Vec<u8>) {
         let hash = self.hasher.hash_one(&key);
         if let Some(&existing_idx) = self.map.find(hash, |&idx| self.nodes_keys[idx] == key) {
+            self.nodes[existing_idx].freq += 1;
             self.nodes[existing_idx].data = data;
             return;
         }
