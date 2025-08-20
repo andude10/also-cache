@@ -62,6 +62,11 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
         Ok(())
     }
 
+    #[inline(always)]
+    pub fn delete(&mut self, key: &Key) -> bool {
+        self.arena.delete(key)
+    }
+
     pub fn print_queues(&self, limit: usize) {
         self.arena.print_queues(limit);
     }

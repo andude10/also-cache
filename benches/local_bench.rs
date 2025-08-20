@@ -5,6 +5,7 @@ use std::mem;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand::prelude::*;
+
 use rand_distr::Zipf;
 
 // Import our cache implementation
@@ -38,6 +39,7 @@ pub fn r_benchmark(c: &mut Criterion) {
 }
 
 pub fn rw_benchmark(c: &mut Criterion) {
+    let mut print_times = 0;
     const N_SAMPLES: usize = 1_000;
     for max_cache_size in [10_000.0, 1_000_000.0] {
         for s in [0.5, 0.75] {
@@ -48,32 +50,32 @@ pub fn rw_benchmark(c: &mut Criterion) {
                 g.bench_function(format!("qc {}", capacity), |b| {
                     let mut hits = 0u64;
                     let mut misses = 0u64;
-                    b.iter_batched_ref(
-                        || {
-                            let mut rng = SmallRng::seed_from_u64(1);
-                            let dist = Zipf::new(max_cache_size, s).unwrap();
-                            let mut cache = AlsoCache::new(capacity * mem::size_of::<usize>()); // original benchmark passed total number of elements, but we pass total size in bytes.
-                            for _ in 0..max_cache_size as usize * 3 {
-                                let sample = dist.sample(&mut rng) as usize;
+
+                    // Setup outside of iterations to match original pattern
+                    let mut rng = SmallRng::seed_from_u64(1);
+                    let dist = Zipf::new(max_cache_size, s).unwrap();
+                    let mut cache = AlsoCache::new(capacity * mem::size_of::<usize>());
+                    for _ in 0..max_cache_size as usize * 3 {
+                        let sample = dist.sample(&mut rng) as usize;
+                        let _ = cache.insert(sample, &sample);
+                    }
+
+                    b.iter(|| {
+                        for _ in 0..N_SAMPLES {
+                            let sample = dist.sample(&mut rng) as usize;
+                            if cache.get::<usize>(&sample).is_ok() {
+                                hits += 1;
+                            } else {
                                 let _ = cache.insert(sample, &sample);
+                                misses += 1;
                             }
-                            (rng, dist, cache)
-                        },
-                        |(rng, dist, cache)| {
-                            for _ in 0..N_SAMPLES {
-                                let sample = dist.sample(rng) as usize;
-                                if cache.get::<usize>(&sample).is_ok() {
-                                    hits += 1;
-                                } else {
-                                    let _ = cache.insert(sample, &sample);
-                                    misses += 1;
-                                }
-                            }
-                            (hits, misses)
-                        },
-                        criterion::BatchSize::LargeInput,
-                    );
-                    eprintln!("Hit rate {:?}", hits as f64 / (hits + misses) as f64);
+                        }
+                        (hits, misses)
+                    });
+                    print_times += 1;
+                    if print_times % 10 == 0 {
+                        eprintln!("Hit rate {:?}", hits as f64 / (hits + misses) as f64);
+                    }
                 });
             }
         }
