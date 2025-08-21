@@ -36,6 +36,24 @@ pub enum CacheError {
 }
 
 impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
+    pub fn with_estimated_count(
+        estimated_items_count: usize,
+        size: usize,
+        weighter: We,
+        hasher: B,
+    ) -> Self {
+        AlsoCache {
+            arena: NodeArena::with_estimated_count(
+                estimated_items_count,
+                (size as f64 * 0.1) as usize,
+                (size as f64 * 0.9) as usize,
+                (size as f64 * 0.6) as usize,
+                hasher,
+            ),
+            weighter,
+        }
+    }
+
     pub fn with(size: usize, weighter: We, hasher: B) -> Self {
         AlsoCache {
             arena: NodeArena::new(
@@ -73,10 +91,16 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
 }
 
 impl<Key: Eq + Hash> AlsoCache<Key, DefaultWeighter, RandomState> {
-    pub fn new(size: usize) -> Self {
+    pub fn default(size: usize) -> Self {
         let weighter = DefaultWeighter;
         let hasher = RandomState::new();
         AlsoCache::with(size, weighter, hasher)
+    }
+
+    pub fn default_with_estimated_count(estimated_items_count: usize, size: usize) -> Self {
+        let weighter = DefaultWeighter;
+        let hasher = RandomState::new();
+        AlsoCache::with_estimated_count(estimated_items_count, size, weighter, hasher)
     }
 }
 

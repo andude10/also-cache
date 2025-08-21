@@ -9,7 +9,7 @@ mod tests {
 
     #[test]
     fn test_insert_get_delete() {
-        let mut cache = AlsoCache::new(2000); // size in bytes
+        let mut cache = AlsoCache::default(2000); // size in bytes
 
         // Test inserting, retrieving and deleting a simple value
         let key1 = "test_key".to_string();
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn test_many_inserts_and_gets() {
-        let mut cache = AlsoCache::new(2000); // size in bytes
+        let mut cache = AlsoCache::default(2000); // size in bytes
 
         for i in 0..10000 {
             let key = format!("key_{}", i);
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_many_deletes() {
-        let mut cache = AlsoCache::new(2000); // size in bytes
+        let mut cache = AlsoCache::default(2000); // size in bytes
 
         // insert many items first
         let num_items = 1000;

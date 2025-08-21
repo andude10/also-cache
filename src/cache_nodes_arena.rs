@@ -40,9 +40,9 @@ enum QueueTypeId {
 
 #[derive(Debug, Clone)]
 struct Node {
+    data: Vec<u8>,
     next: usize,
     prev: usize,
-    data: Vec<u8>,
     weight: usize,
     freq: u16,
     queue: QueueTypeId,
@@ -72,6 +72,7 @@ enum QueueHead<Q> {
 pub struct NodeArena<Key, B> {
     map: HashTable<usize>,
     nodes_keys: Vec<Key>,
+    nodes_hashes: Vec<u64>,
     hasher: B,
 
     nodes: Vec<Node>,
@@ -99,9 +100,36 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
         Self {
             map: HashTable::new(),
             nodes_keys: Vec::new(),
+            nodes_hashes: Vec::new(),
             hasher,
             nodes: Vec::new(),
             freelist: Vec::new(),
+            small_size: 0,
+            main_size: 0,
+            ghost_size: 0,
+            small_threshold,
+            main_threshold,
+            ghost_threshold,
+            small_head: QueueHead::None,
+            main_head: QueueHead::None,
+            ghost_head: QueueHead::None,
+        }
+    }
+
+    pub fn with_estimated_count(
+        estimated_items_count: usize,
+        small_threshold: usize,
+        main_threshold: usize,
+        ghost_threshold: usize,
+        hasher: B,
+    ) -> Self {
+        Self {
+            map: HashTable::with_capacity(estimated_items_count),
+            nodes_keys: Vec::with_capacity(estimated_items_count),
+            nodes_hashes: Vec::with_capacity(estimated_items_count),
+            hasher,
+            nodes: Vec::with_capacity(estimated_items_count),
+            freelist: Vec::with_capacity(estimated_items_count / 4),
             small_size: 0,
             main_size: 0,
             ghost_size: 0,
@@ -118,7 +146,9 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     pub fn get_bytes(&mut self, key: &Key) -> Option<&Vec<u8>> {
         // TODO: checks if key is not freed by checking if data_size is 0, so no type checking
         let hash = self.hasher.hash_one(key);
-        let idx: usize = *self.map.find(hash, |&idx| self.nodes_keys[idx] == *key)?;
+        let idx: usize = *self.map.find(hash, |&idx| {
+            self.nodes_hashes[idx] == hash && self.nodes_keys[idx] == *key
+        })?;
         if self.nodes[idx].freq < 3 {
             self.nodes[idx].freq += 1;
         }
@@ -132,20 +162,23 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     #[inline(always)]
     pub fn insert_bytes(&mut self, key: Key, data_size: usize, data: Vec<u8>) {
         let hash = self.hasher.hash_one(&key);
-        if let Some(&existing_idx) = self.map.find(hash, |&idx| self.nodes_keys[idx] == key) {
+        if let Some(&existing_idx) = self.map.find(hash, |&idx| {
+            self.nodes_hashes[idx] == hash && self.nodes_keys[idx] == key
+        }) {
             self.nodes[existing_idx].freq += 1;
             self.nodes[existing_idx].data = data;
             return;
         }
         let new_node_ref = self.allocate_small(data_size, data);
-        self.map.insert_unique(hash, new_node_ref.idx, |&idx| {
-            self.hasher.hash_one(&self.nodes_keys[idx])
-        });
         if new_node_ref.idx >= self.nodes_keys.len() {
             self.nodes_keys.push(key);
+            self.nodes_hashes.push(hash);
         } else {
             self.nodes_keys[new_node_ref.idx] = key;
+            self.nodes_hashes[new_node_ref.idx] = hash;
         }
+        self.map
+            .insert_unique(hash, new_node_ref.idx, |&idx| self.nodes_hashes[idx]);
 
         // TODO: fix problem with NodeRef (if it's possible): here we have valid NodeRef, but after evictions it may become invalid
 
@@ -156,7 +189,9 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
 
     pub fn delete(&mut self, key: &Key) -> bool {
         let hash = self.hasher.hash_one(key);
-        if let Some(idx) = self.map.find(hash, |&idx| self.nodes_keys[idx] == *key) {
+        if let Some(idx) = self.map.find(hash, |&idx| {
+            self.nodes_hashes[idx] == hash && self.nodes_keys[idx] == *key
+        }) {
             // Check if node is occupied (has data)
             if self.nodes[*idx].data.len() <= 0 {
                 return false;
@@ -328,7 +363,9 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     fn handle_node_eviction(&mut self, node_ref: NodeRef<NoQueue, Free>) {
         // remove associated key
         let hash = self.hasher.hash_one(&self.nodes_keys[node_ref.idx]);
-        if let Ok(entry) = self.map.find_entry(hash, |&idx| idx == node_ref.idx) {
+        if let Ok(entry) = self.map.find_entry(hash, |&idx| {
+            self.nodes_hashes[idx] == hash && idx == node_ref.idx
+        }) {
             entry.remove();
         }
 
