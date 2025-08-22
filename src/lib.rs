@@ -191,4 +191,47 @@ mod tests {
 
         cache.print_queues(10);
     }
+
+    // #[test]
+    // fn test_node_size_comparison() {
+    //     use crate::cache_nodes_arena::{NodeIndex, QueueTypeId};
+
+    //     // Old Node structure with usize indices
+    //     #[derive(Debug, Clone)]
+    //     struct OldNode {
+    //         data: Vec<u8>,
+    //         next: usize,
+    //         prev: usize,
+    //         weight: usize,
+    //         freq: u8,
+    //         queue: QueueTypeId,
+    //     }
+
+    //     // New Node structure with NodeIndex
+    //     #[derive(Debug, Clone)]
+    //     struct NewNode {
+    //         data: Vec<u8>,
+    //         weight: usize,
+    //         next: NodeIndex,
+    //         prev: NodeIndex,
+    //         freq: u8,
+    //         queue: QueueTypeId,
+    //     }
+
+    //     let old_node_size = std::mem::size_of::<OldNode>();
+    //     let new_node_size = std::mem::size_of::<NewNode>();
+
+    //     println!(
+    //         "Old Node size (with usize indices): {} bytes",
+    //         old_node_size
+    //     );
+    //     println!("New Node size (with NodeIndex): {} bytes", new_node_size);
+    //     println!(
+    //         "Size difference: {} bytes",
+    //         (new_node_size as i32) - (old_node_size as i32)
+    //     );
+
+    //     // This test intentionally fails to show the size comparison
+    //     assert!(false, "Test designed to fail and show Node size comparison");
+    // }
 }

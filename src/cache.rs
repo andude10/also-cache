@@ -15,15 +15,15 @@ pub struct AlsoCache<Key, We, B> {
     weighter: We,
 }
 
-pub trait Weighter {
-    fn weight(&self, val: &Vec<u8>) -> usize;
+pub trait Weighter<Key> {
+    fn weight(&self, key: &Key, val: &Vec<u8>) -> u64;
 }
 
 #[derive(Debug, Clone)]
 pub struct DefaultWeighter;
 
-impl Weighter for DefaultWeighter {
-    fn weight(&self, val: &Vec<u8>) -> usize {
+impl<Key> Weighter<Key> for DefaultWeighter {
+    fn weight(&self, _key: &Key, val: &Vec<u8>) -> u64 {
         val.len()
     }
 }
@@ -35,7 +35,7 @@ pub enum CacheError {
     KeyNotFound,
 }
 
-impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
+impl<Key: Eq + Hash, We: Weighter<Key>, B: BuildHasher> AlsoCache<Key, We, B> {
     pub fn with_estimated_count(
         estimated_items_count: usize,
         size: usize,
@@ -75,8 +75,8 @@ impl<Key: Eq + Hash, We: Weighter, B: BuildHasher> AlsoCache<Key, We, B> {
     #[inline(always)]
     pub fn insert<V: Serialize>(&mut self, key: Key, val: &V) -> Result<(), CacheError> {
         let bytes = serialize(val).map_err(CacheError::Encode)?;
-        self.arena
-            .insert_bytes(key, self.weighter.weight(&bytes), bytes);
+        let weight = self.weighter.weight(&key, &bytes);
+        self.arena.insert_bytes(key, weight, bytes);
         Ok(())
     }
 

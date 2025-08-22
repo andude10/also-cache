@@ -3,6 +3,8 @@ use std::{hash::Hash, marker::PhantomData};
 
 use hashbrown::HashTable;
 
+pub type NodeIndex = std::num::NonZeroU32;
+
 #[derive(Debug, Clone, Copy)]
 struct SmallQueue;
 #[derive(Debug, Clone, Copy)]
@@ -31,7 +33,7 @@ struct Occupied;
 struct Free;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum QueueTypeId {
+pub enum QueueTypeId {
     NoQueue,
     Small,
     Main,
@@ -41,10 +43,10 @@ enum QueueTypeId {
 #[derive(Debug, Clone)]
 struct Node {
     data: Vec<u8>,
-    next: usize,
-    prev: usize,
-    weight: usize,
-    freq: u16,
+    weight: u64,
+    next: NodeIndex,
+    prev: NodeIndex,
+    freq: u8,
     queue: QueueTypeId,
 }
 
@@ -57,7 +59,7 @@ struct Node {
 // O: Occupied or Free.
 #[derive(Debug)]
 pub struct NodeRef<Q, O> {
-    idx: usize,
+    idx: NodeIndex,
     _occupied: PhantomData<O>,
     _queue: PhantomData<Q>,
 }
@@ -70,20 +72,19 @@ enum QueueHead<Q> {
 
 #[derive(Debug)]
 pub struct NodeArena<Key, B> {
-    map: HashTable<usize>,
+    map: HashTable<NodeIndex>,
     nodes_keys: Vec<Key>,
-    nodes_hashes: Vec<u64>,
     hasher: B,
 
     nodes: Vec<Node>,
     freelist: Vec<NodeRef<NoQueue, Free>>,
 
-    small_size: usize,
-    main_size: usize,
-    ghost_size: usize,
-    small_threshold: usize,
-    main_threshold: usize,
-    ghost_threshold: usize,
+    small_size: u64,
+    main_size: u64,
+    ghost_size: u64,
+    small_threshold: u64,
+    main_threshold: u64,
+    ghost_threshold: u64,
 
     small_head: QueueHead<SmallQueue>,
     main_head: QueueHead<MainQueue>,
@@ -91,16 +92,10 @@ pub struct NodeArena<Key, B> {
 }
 
 impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
-    pub fn new(
-        small_threshold: usize,
-        main_threshold: usize,
-        ghost_threshold: usize,
-        hasher: B,
-    ) -> Self {
+    pub fn new(small_threshold: u64, main_threshold: u64, ghost_threshold: u64, hasher: B) -> Self {
         Self {
             map: HashTable::new(),
             nodes_keys: Vec::new(),
-            nodes_hashes: Vec::new(),
             hasher,
             nodes: Vec::new(),
             freelist: Vec::new(),
@@ -118,15 +113,14 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
 
     pub fn with_estimated_count(
         estimated_items_count: usize,
-        small_threshold: usize,
-        main_threshold: usize,
-        ghost_threshold: usize,
+        small_threshold: u64,
+        main_threshold: u64,
+        ghost_threshold: u64,
         hasher: B,
     ) -> Self {
         Self {
             map: HashTable::with_capacity(estimated_items_count),
             nodes_keys: Vec::with_capacity(estimated_items_count),
-            nodes_hashes: Vec::with_capacity(estimated_items_count),
             hasher,
             nodes: Vec::with_capacity(estimated_items_count),
             freelist: Vec::with_capacity(estimated_items_count / 4),
@@ -146,39 +140,41 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     pub fn get_bytes(&mut self, key: &Key) -> Option<&Vec<u8>> {
         // TODO: checks if key is not freed by checking if data_size is 0, so no type checking
         let hash = self.hasher.hash_one(key);
-        let idx: usize = *self.map.find(hash, |&idx| {
-            self.nodes_hashes[idx] == hash && self.nodes_keys[idx] == *key
-        })?;
-        if self.nodes[idx].freq < 3 {
-            self.nodes[idx].freq += 1;
+        let idx: NodeIndex = *self
+            .map
+            .find(hash, |&idx| self.nodes_keys[to_idx(idx)] == *key)?;
+        if self.nodes[to_idx(idx)].freq < 3 {
+            self.nodes[to_idx(idx)].freq += 1;
         }
-        return if self.nodes[idx].data.len() > 0 {
-            Some(&self.nodes[idx].data)
+        return if self.nodes[to_idx(idx)].data.len() > 0 {
+            Some(&self.nodes[to_idx(idx)].data)
         } else {
             None
         };
     }
 
     #[inline(always)]
-    pub fn insert_bytes(&mut self, key: Key, data_size: usize, data: Vec<u8>) {
+    pub fn insert_bytes(&mut self, key: Key, data_size: u64, data: Vec<u8>) {
         let hash = self.hasher.hash_one(&key);
-        if let Some(&existing_idx) = self.map.find(hash, |&idx| {
-            self.nodes_hashes[idx] == hash && self.nodes_keys[idx] == key
-        }) {
-            self.nodes[existing_idx].freq += 1;
-            self.nodes[existing_idx].data = data;
+        if let Some(&existing_idx) = self
+            .map
+            .find(hash, |&idx| self.nodes_keys[to_idx(idx)] == key)
+        {
+            if self.nodes[to_idx(existing_idx)].freq < 3 {
+                self.nodes[to_idx(existing_idx)].freq += 1;
+            }
+            self.nodes[to_idx(existing_idx)].data = data;
             return;
         }
         let new_node_ref = self.allocate_small(data_size, data);
-        if new_node_ref.idx >= self.nodes_keys.len() {
+        if new_node_ref.idx.get() as usize > self.nodes_keys.len() {
             self.nodes_keys.push(key);
-            self.nodes_hashes.push(hash);
         } else {
-            self.nodes_keys[new_node_ref.idx] = key;
-            self.nodes_hashes[new_node_ref.idx] = hash;
+            self.nodes_keys[to_idx(new_node_ref.idx)] = key;
         }
-        self.map
-            .insert_unique(hash, new_node_ref.idx, |&idx| self.nodes_hashes[idx]);
+        self.map.insert_unique(hash, new_node_ref.idx, |&idx| {
+            self.hasher.hash_one(&self.nodes_keys[to_idx(idx)])
+        });
 
         // TODO: fix problem with NodeRef (if it's possible): here we have valid NodeRef, but after evictions it may become invalid
 
@@ -189,17 +185,18 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
 
     pub fn delete(&mut self, key: &Key) -> bool {
         let hash = self.hasher.hash_one(key);
-        if let Some(idx) = self.map.find(hash, |&idx| {
-            self.nodes_hashes[idx] == hash && self.nodes_keys[idx] == *key
-        }) {
+        if let Some(idx) = self
+            .map
+            .find(hash, |&idx| self.nodes_keys[to_idx(idx)] == *key)
+        {
             // Check if node is occupied (has data)
-            if self.nodes[*idx].data.len() <= 0 {
+            if self.nodes[to_idx(*idx)].data.len() <= 0 {
                 return false;
             }
-            match self.nodes[*idx].queue {
+            match self.nodes[to_idx(*idx)].queue {
                 QueueTypeId::Small => {
-                    self.small_size -= self.nodes[*idx].weight;
-                    let node_ref = get_node_ref::<SmallQueue>(*idx, &self.nodes);
+                    self.small_size -= self.nodes[to_idx(*idx)].weight;
+                    let node_ref = get_node_ref::<SmallQueue>(to_idx(*idx), &self.nodes);
                     if node_ref_is_head(&node_ref, &self.small_head) {
                         if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.small_head)
                         {
@@ -215,8 +212,8 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
                     }
                 }
                 QueueTypeId::Main => {
-                    self.main_size -= self.nodes[*idx].weight;
-                    let node_ref = get_node_ref::<MainQueue>(*idx, &self.nodes);
+                    self.main_size -= self.nodes[to_idx(*idx)].weight;
+                    let node_ref = get_node_ref::<MainQueue>(to_idx(*idx), &self.nodes);
                     if node_ref_is_head(&node_ref, &self.main_head) {
                         if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.main_head)
                         {
@@ -232,8 +229,8 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
                     }
                 }
                 QueueTypeId::Ghost => {
-                    self.ghost_size -= self.nodes[*idx].weight;
-                    let node_ref = get_node_ref::<GhostQueue>(*idx, &self.nodes);
+                    self.ghost_size -= self.nodes[to_idx(*idx)].weight;
+                    let node_ref = get_node_ref::<GhostQueue>(to_idx(*idx), &self.nodes);
                     if node_ref_is_head(&node_ref, &self.ghost_head) {
                         if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.ghost_head)
                         {
@@ -256,7 +253,7 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
         }
     }
 
-    fn allocate_small(&mut self, data_size: usize, data: Vec<u8>) -> NodeRef<SmallQueue, Occupied> {
+    fn allocate_small(&mut self, data_size: u64, data: Vec<u8>) -> NodeRef<SmallQueue, Occupied> {
         let new_node = self.create_node(data_size, data);
         self.small_size += data_size;
         move_to_queue::<SmallQueue>(new_node, &mut self.nodes, &mut self.small_head)
@@ -266,8 +263,8 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     fn evict_small_if_needed(&mut self) {
         while self.small_size > self.small_threshold {
             if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.small_head) {
-                self.small_size -= self.nodes[detached_head.idx].weight;
-                if self.nodes[detached_head.idx].freq > 0 {
+                self.small_size -= self.nodes[to_idx(detached_head.idx)].weight;
+                if self.nodes[to_idx(detached_head.idx)].freq > 0 {
                     self.promote_to_main(detached_head);
                 } else {
                     self.demote_to_ghost(detached_head);
@@ -283,9 +280,9 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     fn evict_ghost_if_needed(&mut self) {
         while self.ghost_size > self.ghost_threshold {
             if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.ghost_head) {
-                self.ghost_size -= self.nodes[detached_head.idx].weight;
-                if self.nodes[detached_head.idx].freq > 0
-                    && self.nodes[detached_head.idx].data.len() > 0
+                self.ghost_size -= self.nodes[to_idx(detached_head.idx)].weight;
+                if self.nodes[to_idx(detached_head.idx)].freq > 0
+                    && self.nodes[to_idx(detached_head.idx)].data.len() > 0
                 {
                     self.promote_to_main(detached_head);
                 } else {
@@ -302,10 +299,10 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     fn evict_main_if_needed(&mut self) {
         while self.main_size > self.main_threshold {
             if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.main_head) {
-                if self.nodes[detached_head.idx].freq > 0 {
+                if self.nodes[to_idx(detached_head.idx)].freq > 0 {
                     self.reinsert_main(detached_head);
                 } else {
-                    self.main_size -= self.nodes[detached_head.idx].weight;
+                    self.main_size -= self.nodes[to_idx(detached_head.idx)].weight;
                     let freed_ref = evict_node(detached_head, &mut self.nodes);
                     self.handle_node_eviction(freed_ref);
                 }
@@ -316,32 +313,32 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     }
 
     fn reinsert_main(&mut self, node_ref: NodeRef<NoQueue, Occupied>) {
-        self.nodes[node_ref.idx].freq -= 1;
+        self.nodes[to_idx(node_ref.idx)].freq -= 1;
         let _ = move_to_queue::<MainQueue>(node_ref, &mut self.nodes, &mut self.main_head);
     }
 
     fn promote_to_main(&mut self, node_ref: NodeRef<NoQueue, Occupied>) {
-        self.nodes[node_ref.idx].freq = 0;
-        self.main_size += self.nodes[node_ref.idx].weight;
+        self.nodes[to_idx(node_ref.idx)].freq = 0;
+        self.main_size += self.nodes[to_idx(node_ref.idx)].weight;
         let _ = move_to_queue::<MainQueue>(node_ref, &mut self.nodes, &mut self.main_head);
     }
 
     fn demote_to_ghost(&mut self, node_ref: NodeRef<NoQueue, Occupied>) {
-        self.ghost_size += self.nodes[node_ref.idx].weight;
+        self.ghost_size += self.nodes[to_idx(node_ref.idx)].weight;
         let ghost_ref =
             move_to_queue::<GhostQueue>(node_ref, &mut self.nodes, &mut self.ghost_head);
-        self.nodes[ghost_ref.idx].data = Vec::new(); // Drop data for ghost nodes
+        self.nodes[to_idx(ghost_ref.idx)].data = Vec::new(); // Drop data for ghost nodes
         // do not reset data_size (used to calculate ghost_size)
     }
 
-    fn create_node(&mut self, data_size: usize, data: Vec<u8>) -> NodeRef<NoQueue, Occupied> {
+    fn create_node(&mut self, data_size: u64, data: Vec<u8>) -> NodeRef<NoQueue, Occupied> {
         let idx = if let Some(freed_ref) = self.freelist.pop() {
             // reuse a freed node
             let occupied_ref = occupy_node(freed_ref, &mut self.nodes, data_size, data);
             occupied_ref.idx
         } else {
             // if no free index, we need to allocate a new node
-            let new_idx = self.nodes.len();
+            let new_idx = NodeIndex::new((self.nodes.len() + 1) as u32).unwrap();
             self.nodes.push(Node {
                 next: new_idx,
                 prev: new_idx,
@@ -362,10 +359,8 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
 
     fn handle_node_eviction(&mut self, node_ref: NodeRef<NoQueue, Free>) {
         // remove associated key
-        let hash = self.hasher.hash_one(&self.nodes_keys[node_ref.idx]);
-        if let Ok(entry) = self.map.find_entry(hash, |&idx| {
-            self.nodes_hashes[idx] == hash && idx == node_ref.idx
-        }) {
+        let hash = self.hasher.hash_one(&self.nodes_keys[to_idx(node_ref.idx)]);
+        if let Ok(entry) = self.map.find_entry(hash, |&idx| idx == node_ref.idx) {
             entry.remove();
         }
 
@@ -402,10 +397,10 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
 
                 loop {
                     if count <= truncate_count {
-                        out.push(format!("{}", current_idx));
+                        out.push(format!("{:?}", current_idx));
                     }
 
-                    current_idx = self.nodes[current_idx].next;
+                    current_idx = self.nodes[to_idx(current_idx)].next;
                     count += 1;
                     if count > 10_000 {
                         panic!("Too many elements in queue, something is wrong");
@@ -452,7 +447,7 @@ fn get_node_ref<Q: QueueWithMembers>(idx: usize, nodes: &Vec<Node>) -> NodeRef<Q
     match nodes[idx].queue {
         QueueTypeId::NoQueue => panic!("Node at index {} is not part of any queue", idx),
         _ => NodeRef {
-            idx,
+            idx: NodeIndex::new((idx + 1) as u32).unwrap(),
             _occupied: PhantomData,
             _queue: PhantomData::<Q>,
         },
@@ -463,17 +458,17 @@ fn unlink_node<Q: QueueWithMembers>(
     node_ref: NodeRef<Q, Occupied>,
     nodes: &mut Vec<Node>,
 ) -> NodeRef<NoQueue, Occupied> {
-    nodes[node_ref.idx].queue = QueueTypeId::NoQueue;
+    nodes[to_idx(node_ref.idx)].queue = QueueTypeId::NoQueue;
 
     // link the previous and next nodes to each other
-    let next_idx = nodes[node_ref.idx].next;
-    let prev_idx = nodes[node_ref.idx].prev;
-    nodes[prev_idx].next = next_idx;
-    nodes[next_idx].prev = prev_idx;
+    let next_idx = nodes[to_idx(node_ref.idx)].next;
+    let prev_idx = nodes[to_idx(node_ref.idx)].prev;
+    nodes[to_idx(prev_idx)].next = next_idx;
+    nodes[to_idx(next_idx)].prev = prev_idx;
 
     // link to itself
-    nodes[node_ref.idx].next = node_ref.idx;
-    nodes[node_ref.idx].prev = node_ref.idx;
+    nodes[to_idx(node_ref.idx)].next = node_ref.idx;
+    nodes[to_idx(node_ref.idx)].prev = node_ref.idx;
 
     NodeRef {
         idx: node_ref.idx,
@@ -486,16 +481,15 @@ fn prev_node<Q: QueueWithMembers>(
     node_ref: &NodeRef<Q, Occupied>,
     nodes: &Vec<Node>,
 ) -> Option<NodeRef<Q, Occupied>> {
-    if nodes[node_ref.idx].prev == node_ref.idx {
+    if nodes[to_idx(node_ref.idx)].prev == node_ref.idx {
         // if the prev node is itself, it means it's the only node in the queue
         return None;
     }
-    // otherwise, return the previous node
-    let prev_idx = nodes[node_ref.idx].prev;
+    let prev_idx = nodes[to_idx(node_ref.idx)].prev;
     Some(NodeRef {
         idx: prev_idx,
         _occupied: PhantomData,
-        _queue: PhantomData::<Q>,
+        _queue: PhantomData,
     })
 }
 
@@ -503,11 +497,11 @@ fn evict_node(
     node_ref: NodeRef<NoQueue, Occupied>,
     nodes: &mut Vec<Node>,
 ) -> NodeRef<NoQueue, Free> {
-    nodes[node_ref.idx].data = Vec::new();
-    nodes[node_ref.idx].weight = 0;
-    nodes[node_ref.idx].freq = 0;
-    nodes[node_ref.idx].next = usize::MAX; // set to usize::MAX so any use as an index will panic
-    nodes[node_ref.idx].prev = usize::MAX;
+    nodes[to_idx(node_ref.idx)].data = Vec::new();
+    nodes[to_idx(node_ref.idx)].weight = 0;
+    nodes[to_idx(node_ref.idx)].freq = 0;
+    nodes[to_idx(node_ref.idx)].next = NodeIndex::new(u32::MAX).unwrap(); // set to u32::MAX so any use as an index will panic
+    nodes[to_idx(node_ref.idx)].prev = NodeIndex::new(u32::MAX).unwrap();
     NodeRef {
         idx: node_ref.idx,
         _occupied: PhantomData,
@@ -518,14 +512,14 @@ fn evict_node(
 fn occupy_node(
     node_ref: NodeRef<NoQueue, Free>,
     nodes: &mut Vec<Node>,
-    data_size: usize,
+    data_size: u64,
     data: Vec<u8>,
 ) -> NodeRef<NoQueue, Occupied> {
-    nodes[node_ref.idx].data = data;
-    nodes[node_ref.idx].weight = data_size;
-    nodes[node_ref.idx].freq = 0;
-    nodes[node_ref.idx].next = node_ref.idx;
-    nodes[node_ref.idx].prev = node_ref.idx;
+    nodes[to_idx(node_ref.idx)].data = data;
+    nodes[to_idx(node_ref.idx)].weight = data_size;
+    nodes[to_idx(node_ref.idx)].freq = 0;
+    nodes[to_idx(node_ref.idx)].next = node_ref.idx;
+    nodes[to_idx(node_ref.idx)].prev = node_ref.idx;
     NodeRef {
         idx: node_ref.idx,
         _occupied: PhantomData,
@@ -538,15 +532,15 @@ fn move_to_queue<Q: QueueWithMembers>(
     nodes: &mut Vec<Node>,
     head: &mut QueueHead<Q>,
 ) -> NodeRef<Q, Occupied> {
-    nodes[node_ref.idx].queue = Q::QUEUE_ID;
+    nodes[to_idx(node_ref.idx)].queue = Q::QUEUE_ID;
     match head {
         QueueHead::Some(head_ref) => {
             // link to the head of the new queue
-            let tail_idx = nodes[head_ref.idx].next;
-            nodes[tail_idx].prev = node_ref.idx;
-            nodes[node_ref.idx].prev = head_ref.idx;
-            nodes[node_ref.idx].next = tail_idx;
-            nodes[head_ref.idx].next = node_ref.idx;
+            let tail_idx = nodes[to_idx(head_ref.idx)].next;
+            nodes[to_idx(tail_idx)].prev = node_ref.idx;
+            nodes[to_idx(node_ref.idx)].prev = head_ref.idx;
+            nodes[to_idx(node_ref.idx)].next = tail_idx;
+            nodes[to_idx(head_ref.idx)].next = node_ref.idx;
         }
         QueueHead::None => {
             let new_head_ref = NodeRef {
@@ -561,8 +555,13 @@ fn move_to_queue<Q: QueueWithMembers>(
     NodeRef {
         idx: node_ref.idx,
         _occupied: PhantomData,
-        _queue: PhantomData::<Q>,
+        _queue: PhantomData,
     }
+}
+
+#[inline(always)]
+fn to_idx(node_idx: NodeIndex) -> usize {
+    node_idx.get() as usize - 1
 }
 
 // Pop the head of the queue. Unlink the head if it exists, make previous node a new head, and return the unlinked node.
