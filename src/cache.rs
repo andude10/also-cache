@@ -24,7 +24,7 @@ pub struct DefaultWeighter;
 
 impl<Key> Weighter<Key> for DefaultWeighter {
     fn weight(&self, _key: &Key, val: &Vec<u8>) -> u64 {
-        val.len()
+        val.len() as u64
     }
 }
 
@@ -45,9 +45,9 @@ impl<Key: Eq + Hash, We: Weighter<Key>, B: BuildHasher> AlsoCache<Key, We, B> {
         AlsoCache {
             arena: NodeArena::with_estimated_count(
                 estimated_items_count,
-                (size as f64 * 0.1) as usize,
-                (size as f64 * 0.9) as usize,
-                (size as f64 * 0.6) as usize,
+                (size as f64 * 0.1) as u64,
+                (size as f64 * 0.9) as u64,
+                (size as f64 * 0.6) as u64,
                 hasher,
             ),
             weighter,
@@ -57,9 +57,9 @@ impl<Key: Eq + Hash, We: Weighter<Key>, B: BuildHasher> AlsoCache<Key, We, B> {
     pub fn with(size: usize, weighter: We, hasher: B) -> Self {
         AlsoCache {
             arena: NodeArena::new(
-                (size as f64 * 0.1) as usize,
-                (size as f64 * 0.9) as usize,
-                (size as f64 * 0.6) as usize,
+                (size as f64 * 0.1) as u64,
+                (size as f64 * 0.9) as u64,
+                (size as f64 * 0.6) as u64,
                 hasher,
             ),
             weighter,
