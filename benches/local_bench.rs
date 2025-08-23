@@ -13,16 +13,16 @@ use also_cache::cache::AlsoCache;
 
 pub fn r_benchmark(c: &mut Criterion) {
     const N_SAMPLES: usize = 1_000;
-    for max_cache_size in [10_000, 1_000_000] {
+    for population in [10_000, 1_000_000] {
         for s in [0.5, 0.75] {
-            let mut g = c.benchmark_group(format!("Reads N={} S={}", max_cache_size, s));
+            let mut g = c.benchmark_group(format!("Reads N={} S={}", population, s));
             g.throughput(criterion::Throughput::Elements(N_SAMPLES as u64));
-            g.bench_function(format!("qc {}", max_cache_size), |b| {
-                let mut cache = AlsoCache::default(max_cache_size * mem::size_of::<usize>()); // original benchmark passed total number of elements, but we pass total size in bytes.
-                let mut samples = (0usize..max_cache_size).collect::<Vec<_>>();
+            g.bench_function(format!("qc {}", population), |b| {
+                let cache = AlsoCache::default(population);
+                let mut samples = (0usize..population).collect::<Vec<_>>();
                 let mut rng = SmallRng::seed_from_u64(1);
                 samples.shuffle(&mut rng);
-                samples.truncate((max_cache_size as f64 * s) as usize);
+                samples.truncate((population as f64 * s) as usize);
                 for p in samples {
                     let _ = cache.insert(p, &p);
                 }
@@ -54,7 +54,7 @@ pub fn rw_benchmark(c: &mut Criterion) {
                         || {
                             let mut rng = SmallRng::seed_from_u64(1);
                             let dist = Zipf::new(population, s).unwrap();
-                            let mut cache = AlsoCache::default(capacity * mem::size_of::<usize>());
+                            let cache = AlsoCache::default(capacity * mem::size_of::<usize>());
                             for _ in 0..population as usize * 3 {
                                 let sample = dist.sample(&mut rng) as usize;
                                 let _ = cache.insert(sample, &sample);

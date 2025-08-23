@@ -1,5 +1,5 @@
 pub mod cache;
-pub mod cache_nodes_arena;
+pub mod cache_shard;
 
 #[cfg(test)]
 mod tests {
@@ -9,43 +9,44 @@ mod tests {
 
     #[test]
     fn test_insert_get_delete() {
-        let mut cache = AlsoCache::default(2000); // size in bytes
+        let cache = AlsoCache::default(2000); // size in bytes
 
-        // Test inserting, retrieving and deleting a simple value
+        // test inserting, retrieving and deleting a simple value
         let key1 = "test_key".to_string();
         let val_str = "some value of type String".to_string();
+
         cache
-            .insert(key1, &val_str)
+            .insert(key1.clone(), &val_str)
             .expect("first insert should succeed");
 
         let retrieved_str: String = cache
-            .get(&"test_key".to_string())
+            .get(&key1)
             .expect("get after insertion should succeed");
         assert_eq!(
             retrieved_str, val_str,
             "Retrieved value should match inserted value"
         );
 
-        let delete_res = cache.delete(&"test_key".to_string());
+        let delete_res = cache.delete(&key1);
         assert_eq!(delete_res, true, "Delete should succeed");
-        let retrieved_after_delete: Result<String, CacheError> = cache.get(&"test_key".to_string());
+        let retrieved_after_delete: Result<String, CacheError> = cache.get(&key1);
         assert!(
             matches!(retrieved_after_delete, Err(CacheError::KeyNotFound)),
             "Get after delete should fail for simple value"
         );
 
-        // Test inserting, retrieving and deleting a value of a more complex type
+        // test inserting, retrieving and deleting a value of a more complex type
         #[derive(Debug, PartialEq, Serialize, Deserialize)]
         struct ExampleStruct(i32, Vec<String>, bool);
 
         let key2 = "test_key_struct".to_string();
         let val_struct = ExampleStruct(42, vec!["example".to_string(), "test".to_string()], true);
         cache
-            .insert(key2, &val_struct)
+            .insert(key2.clone(), &val_struct)
             .expect("insert struct should succeed");
 
         let retrieved_struct: ExampleStruct = cache
-            .get(&"test_key_struct".to_string())
+            .get(&key2)
             .expect("get struct after insertion should succeed");
 
         assert_eq!(
@@ -53,10 +54,9 @@ mod tests {
             "Retrieved struct should match inserted struct"
         );
 
-        let delete_res = cache.delete(&"test_key_struct".to_string());
+        let delete_res = cache.delete(&key2);
         assert_eq!(delete_res, true, "Delete should succeed");
-        let retrieved_after_delete: Result<String, CacheError> =
-            cache.get(&"test_key_struct".to_string());
+        let retrieved_after_delete: Result<String, CacheError> = cache.get(&key2);
         assert!(
             matches!(retrieved_after_delete, Err(CacheError::KeyNotFound)),
             "Get after delete should fail for struct value"
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn test_many_inserts_and_gets() {
-        let mut cache = AlsoCache::default(2000); // size in bytes
+        let cache = AlsoCache::default(2000); // size in bytes
 
         for i in 0..10000 {
             let key = format!("key_{}", i);
@@ -106,12 +106,12 @@ mod tests {
 
         assert!(found_count > 0, "At least some keys should be found");
         println!("Total keys found: {}", found_count);
-        assert!(found_count == 50, "Expected 50 keys to be found"); //TODO: remove this assert / make more reasonable
+        assert!(found_count == 50, "Expected 50 keys to be found"); // TODO: remove this assert / make more reasonable
     }
 
     #[test]
     fn test_many_deletes() {
-        let mut cache = AlsoCache::default(2000); // size in bytes
+        let cache = AlsoCache::default(2000); // size in bytes
 
         // insert many items first
         let num_items = 1000;
@@ -190,6 +190,62 @@ mod tests {
         }
 
         cache.print_queues(10);
+    }
+
+    #[test]
+    fn test_sharded_cache() {
+        let cache = AlsoCache::default(20_000);
+
+        let test_keys = vec![
+            "key_a".to_string(),
+            "key_b".to_string(),
+            "key_c".to_string(),
+        ];
+
+        // insert and immediately verify each key
+        for (i, key) in test_keys.iter().enumerate() {
+            let value = format!("value_{}", i);
+            cache
+                .insert(key.clone(), &value)
+                .expect("insert should succeed");
+
+            let retrieved: String = cache
+                .get(key)
+                .expect("get should succeed immediately after insert");
+            assert_eq!(
+                retrieved, value,
+                "Value should match immediately after insert"
+            );
+        }
+
+        // test that the same key consistently maps to the same shard
+        for round in 0..3 {
+            for (i, key) in test_keys.iter().enumerate() {
+                let expected = format!("value_{}", i);
+                let retrieved: String = cache
+                    .get(key)
+                    .expect("get should be consistent across rounds");
+                assert_eq!(
+                    retrieved, expected,
+                    "Value should be consistent in round {}",
+                    round
+                );
+            }
+        }
+
+        cache.delete(&test_keys[1]);
+        let result: Result<String, CacheError> = cache.get(&test_keys[1]);
+        assert!(
+            matches!(result, Err(CacheError::KeyNotFound)),
+            "Deleted key should not be found"
+        );
+
+        let retrieved: String = cache
+            .get(&test_keys[0])
+            .expect("Non-deleted key should still work");
+        assert_eq!(retrieved, "value_0");
+
+        println!("Basic sharded cache test completed successfully");
     }
 
     // #[test]

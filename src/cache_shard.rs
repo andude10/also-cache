@@ -72,7 +72,7 @@ enum QueueHead<Q> {
 }
 
 #[derive(Debug)]
-pub struct NodeArena<Key, B> {
+pub struct CacheShard<Key, B> {
     map: HashTable<NodeIndex>,
     nodes_keys: Vec<Key>,
     hasher: B,
@@ -92,7 +92,7 @@ pub struct NodeArena<Key, B> {
     ghost_head: QueueHead<GhostQueue>,
 }
 
-impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
+impl<Key: Eq + Hash, B: BuildHasher> CacheShard<Key, B> {
     pub fn new(small_threshold: u64, main_threshold: u64, ghost_threshold: u64, hasher: B) -> Self {
         Self {
             map: HashTable::new(),
@@ -346,6 +346,18 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
         self.print_queue("Small", &self.small_head, truncate_count);
         self.print_queue("Main", &self.main_head, truncate_count);
         self.print_queue("Ghost", &self.ghost_head, truncate_count);
+    }
+
+    pub fn get_small_size(&self) -> u64 {
+        self.small_size
+    }
+
+    pub fn get_main_size(&self) -> u64 {
+        self.main_size
+    }
+
+    pub fn get_ghost_size(&self) -> u64 {
+        self.ghost_size
     }
 
     fn print_queue(
