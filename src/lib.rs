@@ -200,9 +200,9 @@ mod tests {
     //     #[derive(Debug, Clone)]
     //     struct OldNode {
     //         data: Vec<u8>,
-    //         next: usize,
-    //         prev: usize,
     //         weight: usize,
+    //         next: NodeIndex,
+    //         prev: NodeIndex,
     //         freq: u8,
     //         queue: QueueTypeId,
     //     }
@@ -210,10 +210,10 @@ mod tests {
     //     // New Node structure with NodeIndex
     //     #[derive(Debug, Clone)]
     //     struct NewNode {
-    //         data: Vec<u8>,
     //         weight: usize,
     //         next: NodeIndex,
     //         prev: NodeIndex,
+    //         data_idx: NodeIndex,
     //         freq: u8,
     //         queue: QueueTypeId,
     //     }

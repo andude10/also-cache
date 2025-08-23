@@ -1,6 +1,5 @@
 use std::hash::{BuildHasher, Hash};
 
-use ahash::RandomState;
 use bincode::{
     config::standard,
     error::{DecodeError, EncodeError},
@@ -15,11 +14,11 @@ pub struct AlsoCache<Key, We, B> {
     weighter: We,
 }
 
-pub trait Weighter<Key> {
+pub trait Weighter<Key>: Default {
     fn weight(&self, key: &Key, val: &Vec<u8>) -> u64;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DefaultWeighter;
 
 impl<Key> Weighter<Key> for DefaultWeighter {
@@ -47,7 +46,7 @@ impl<Key: Eq + Hash, We: Weighter<Key>, B: BuildHasher> AlsoCache<Key, We, B> {
                 estimated_items_count,
                 (size as f64 * 0.1) as u64,
                 (size as f64 * 0.9) as u64,
-                (size as f64 * 0.6) as u64,
+                (size as f64 * 0.5) as u64,
                 hasher,
             ),
             weighter,
@@ -59,7 +58,7 @@ impl<Key: Eq + Hash, We: Weighter<Key>, B: BuildHasher> AlsoCache<Key, We, B> {
             arena: NodeArena::new(
                 (size as f64 * 0.1) as u64,
                 (size as f64 * 0.9) as u64,
-                (size as f64 * 0.6) as u64,
+                (size as f64 * 0.5) as u64,
                 hasher,
             ),
             weighter,
@@ -90,17 +89,18 @@ impl<Key: Eq + Hash, We: Weighter<Key>, B: BuildHasher> AlsoCache<Key, We, B> {
     }
 }
 
-impl<Key: Eq + Hash> AlsoCache<Key, DefaultWeighter, RandomState> {
+impl<Key: Eq + Hash> AlsoCache<Key, DefaultWeighter, ahash::RandomState> {
     pub fn default(size: usize) -> Self {
-        let weighter = DefaultWeighter;
-        let hasher = RandomState::new();
-        AlsoCache::with(size, weighter, hasher)
+        AlsoCache::with(size, Default::default(), Default::default())
     }
 
     pub fn default_with_estimated_count(estimated_items_count: usize, size: usize) -> Self {
-        let weighter = DefaultWeighter;
-        let hasher = RandomState::new();
-        AlsoCache::with_estimated_count(estimated_items_count, size, weighter, hasher)
+        AlsoCache::with_estimated_count(
+            estimated_items_count,
+            size,
+            Default::default(),
+            Default::default(),
+        )
     }
 }
 

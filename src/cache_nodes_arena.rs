@@ -50,7 +50,8 @@ struct Node {
     queue: QueueTypeId,
 }
 
-// TODO: so ideally during the whole lifetime of NodeRef, index should be in the state that NodeRef enforces, but it's not always like that.
+// TODO: so ideally during the whole lifetime of NodeRef, index should be in the state
+// that NodeRef enforces, but it's not always like that (after calling evict for example).
 
 // This is represents a reference to a node in a Vec<Node>. Index in Vec<Node> can be
 // in many states: occupied or free, part of some queue or not. To make things easier
@@ -138,45 +139,51 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
 
     #[inline(always)]
     pub fn get_bytes(&mut self, key: &Key) -> Option<&Vec<u8>> {
-        // TODO: checks if key is not freed by checking if data_size is 0, so no type checking
         let hash = self.hasher.hash_one(key);
-        let idx: NodeIndex = *self
+        let idx = self
             .map
-            .find(hash, |&idx| self.nodes_keys[to_idx(idx)] == *key)?;
-        if self.nodes[to_idx(idx)].freq < 3 {
-            self.nodes[to_idx(idx)].freq += 1;
+            .find(hash, |&idx| self.nodes_keys[to_idx(idx)] == *key)
+            .map(|&idx| to_idx(idx))?;
+        if self.nodes[idx].freq < 3 {
+            self.nodes[idx].freq += 1;
         }
-        return if self.nodes[to_idx(idx)].data.len() > 0 {
-            Some(&self.nodes[to_idx(idx)].data)
-        } else {
-            None
-        };
+        (!self.nodes[idx].data.is_empty()).then_some(&self.nodes[idx].data)
     }
 
     #[inline(always)]
     pub fn insert_bytes(&mut self, key: Key, data_size: u64, data: Vec<u8>) {
         let hash = self.hasher.hash_one(&key);
-        if let Some(&existing_idx) = self
+
+        // update node if it already exists
+        if let Some(idx) = self
             .map
             .find(hash, |&idx| self.nodes_keys[to_idx(idx)] == key)
+            .map(|&idx| to_idx(idx))
         {
-            if self.nodes[to_idx(existing_idx)].freq < 3 {
-                self.nodes[to_idx(existing_idx)].freq += 1;
+            if self.nodes[idx].freq < 3 {
+                self.nodes[idx].freq += 1;
             }
-            self.nodes[to_idx(existing_idx)].data = data;
+            let weight_diff = data_size - self.nodes[idx].weight;
+            match self.nodes[idx].queue {
+                QueueTypeId::Small => self.small_size += weight_diff,
+                QueueTypeId::Main => self.main_size += weight_diff,
+                QueueTypeId::Ghost => self.main_size += weight_diff,
+                QueueTypeId::NoQueue => {}
+            }
+            self.nodes[idx].data = data;
+            self.nodes[idx].weight = data_size;
             return;
         }
-        let new_node_ref = self.allocate_small(data_size, data);
-        if new_node_ref.idx.get() as usize > self.nodes_keys.len() {
+
+        let new_idx = self.allocate_small(data_size, data).idx;
+        if to_idx(new_idx) == self.nodes_keys.len() {
             self.nodes_keys.push(key);
         } else {
-            self.nodes_keys[to_idx(new_node_ref.idx)] = key;
+            self.nodes_keys[to_idx(new_idx)] = key;
         }
-        self.map.insert_unique(hash, new_node_ref.idx, |&idx| {
+        self.map.insert_unique(hash, new_idx, |&idx| {
             self.hasher.hash_one(&self.nodes_keys[to_idx(idx)])
         });
-
-        // TODO: fix problem with NodeRef (if it's possible): here we have valid NodeRef, but after evictions it may become invalid
 
         self.evict_small_if_needed();
         self.evict_ghost_if_needed();
@@ -185,72 +192,42 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
 
     pub fn delete(&mut self, key: &Key) -> bool {
         let hash = self.hasher.hash_one(key);
-        if let Some(idx) = self
+        let Some(idx) = self
             .map
             .find(hash, |&idx| self.nodes_keys[to_idx(idx)] == *key)
-        {
-            // Check if node is occupied (has data)
-            if self.nodes[to_idx(*idx)].data.len() <= 0 {
-                return false;
-            }
-            match self.nodes[to_idx(*idx)].queue {
-                QueueTypeId::Small => {
-                    self.small_size -= self.nodes[to_idx(*idx)].weight;
-                    let node_ref = get_node_ref::<SmallQueue>(to_idx(*idx), &self.nodes);
-                    if node_ref_is_head(&node_ref, &self.small_head) {
-                        if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.small_head)
-                        {
-                            let freed_ref = evict_node(detached_head, &mut self.nodes);
-                            self.handle_node_eviction(freed_ref);
-                        } else {
-                            unreachable!();
-                        }
-                    } else {
-                        let unlinked = unlink_node(node_ref, &mut self.nodes);
-                        let freed_ref = evict_node(unlinked, &mut self.nodes);
-                        self.handle_node_eviction(freed_ref);
-                    }
-                }
-                QueueTypeId::Main => {
-                    self.main_size -= self.nodes[to_idx(*idx)].weight;
-                    let node_ref = get_node_ref::<MainQueue>(to_idx(*idx), &self.nodes);
-                    if node_ref_is_head(&node_ref, &self.main_head) {
-                        if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.main_head)
-                        {
-                            let freed_ref = evict_node(detached_head, &mut self.nodes);
-                            self.handle_node_eviction(freed_ref);
-                        } else {
-                            unreachable!();
-                        }
-                    } else {
-                        let unlinked = unlink_node(node_ref, &mut self.nodes);
-                        let freed_ref = evict_node(unlinked, &mut self.nodes);
-                        self.handle_node_eviction(freed_ref);
-                    }
-                }
-                QueueTypeId::Ghost => {
-                    self.ghost_size -= self.nodes[to_idx(*idx)].weight;
-                    let node_ref = get_node_ref::<GhostQueue>(to_idx(*idx), &self.nodes);
-                    if node_ref_is_head(&node_ref, &self.ghost_head) {
-                        if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.ghost_head)
-                        {
-                            let freed_ref = evict_node(detached_head, &mut self.nodes);
-                            self.handle_node_eviction(freed_ref);
-                        } else {
-                            unreachable!();
-                        }
-                    } else {
-                        let unlinked = unlink_node(node_ref, &mut self.nodes);
-                        let freed_ref = evict_node(unlinked, &mut self.nodes);
-                        self.handle_node_eviction(freed_ref);
-                    }
-                }
-                QueueTypeId::NoQueue => {} // Already freed node, nothing to do
-            }
-            true
-        } else {
-            false
+            .map(|idx| to_idx(*idx))
+        else {
+            return false;
+        };
+
+        // check if node is occupied (has data)
+        if self.nodes[idx].data.len() <= 0 {
+            return false;
         }
+
+        // remove node from its queue and update size
+        match self.nodes[idx].queue {
+            QueueTypeId::Small => {
+                self.small_size -= self.nodes[idx].weight;
+                let node_ref = get_node_ref::<SmallQueue>(idx, &self.nodes);
+                let freed_ref = delete_node(node_ref, &mut self.small_head, &mut self.nodes);
+                self.handle_node_eviction(freed_ref);
+            }
+            QueueTypeId::Main => {
+                self.main_size -= self.nodes[idx].weight;
+                let node_ref = get_node_ref::<MainQueue>(idx, &self.nodes);
+                let freed_ref = delete_node(node_ref, &mut self.main_head, &mut self.nodes);
+                self.handle_node_eviction(freed_ref);
+            }
+            QueueTypeId::Ghost => {
+                self.ghost_size -= self.nodes[idx].weight;
+                let node_ref = get_node_ref::<GhostQueue>(idx, &self.nodes);
+                let freed_ref = delete_node(node_ref, &mut self.ghost_head, &mut self.nodes);
+                self.handle_node_eviction(freed_ref);
+            }
+            QueueTypeId::NoQueue => return false,
+        }
+        true
     }
 
     fn allocate_small(&mut self, data_size: u64, data: Vec<u8>) -> NodeRef<SmallQueue, Occupied> {
@@ -259,7 +236,6 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
         move_to_queue::<SmallQueue>(new_node, &mut self.nodes, &mut self.small_head)
     }
 
-    #[inline(always)]
     fn evict_small_if_needed(&mut self) {
         while self.small_size > self.small_threshold {
             if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.small_head) {
@@ -276,7 +252,6 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     }
 
     // TODO: maybe remove code duplication with `evict_small` and `evict_main`
-    #[inline(always)]
     fn evict_ghost_if_needed(&mut self) {
         while self.ghost_size > self.ghost_threshold {
             if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.ghost_head) {
@@ -295,7 +270,6 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
         }
     }
 
-    #[inline(always)]
     fn evict_main_if_needed(&mut self) {
         while self.main_size > self.main_threshold {
             if let Some(detached_head) = pop_head(&mut self.nodes, &mut self.main_head) {
@@ -433,16 +407,6 @@ impl<Key: Eq + Hash, B: BuildHasher> NodeArena<Key, B> {
     }
 }
 
-fn node_ref_is_head<Q: QueueWithMembers>(
-    node_ref: &NodeRef<Q, Occupied>,
-    head: &QueueHead<Q>,
-) -> bool {
-    match head {
-        QueueHead::Some(head_ref) => head_ref.idx == node_ref.idx,
-        QueueHead::None => false,
-    }
-}
-
 fn get_node_ref<Q: QueueWithMembers>(idx: usize, nodes: &Vec<Node>) -> NodeRef<Q, Occupied> {
     match nodes[idx].queue {
         QueueTypeId::NoQueue => panic!("Node at index {} is not part of any queue", idx),
@@ -474,6 +438,27 @@ fn unlink_node<Q: QueueWithMembers>(
         idx: node_ref.idx,
         _occupied: PhantomData,
         _queue: PhantomData::<NoQueue>,
+    }
+}
+
+fn delete_node<Q: QueueWithMembers>(
+    node_ref: NodeRef<Q, Occupied>,
+    head: &mut QueueHead<Q>,
+    nodes: &mut Vec<Node>,
+) -> NodeRef<NoQueue, Free> {
+    let is_head = match head {
+        QueueHead::Some(head_ref) => head_ref.idx == node_ref.idx,
+        QueueHead::None => false,
+    };
+    if is_head {
+        if let Some(detached_head) = pop_head(nodes, head) {
+            evict_node(detached_head, nodes)
+        } else {
+            unreachable!();
+        }
+    } else {
+        let unlinked = unlink_node(node_ref, nodes);
+        evict_node(unlinked, nodes)
     }
 }
 
