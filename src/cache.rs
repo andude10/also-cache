@@ -14,11 +14,11 @@ pub const MAIN_THRESHOLD_RATIO: f64 = 0.9;
 pub const GHOST_THRESHOLD_RATIO: f64 = 0.5;
 pub const MIN_SHARD_SIZE: usize = 8192;
 
-pub struct AlsoCache<Key, We, B> {
-    shards: Vec<Mutex<CacheShard<Key, B>>>,
-    shard_mask: usize,
-    weighter: We,
-    hasher: B,
+#[derive(Debug)]
+pub enum CacheError {
+    Decode(DecodeError),
+    Encode(EncodeError),
+    KeyNotFound,
 }
 
 pub trait Weighter<Key>: Default + Clone {
@@ -34,11 +34,11 @@ impl<Key> Weighter<Key> for DefaultWeighter {
     }
 }
 
-#[derive(Debug)]
-pub enum CacheError {
-    Decode(DecodeError),
-    Encode(EncodeError),
-    KeyNotFound,
+pub struct AlsoCache<Key, We, B> {
+    shards: Vec<Mutex<CacheShard<Key, B>>>,
+    shard_mask: usize,
+    weighter: We,
+    hasher: B,
 }
 
 impl<Key: Eq + Hash + Clone, We: Weighter<Key>, B: BuildHasher + Clone> AlsoCache<Key, We, B> {
@@ -204,6 +204,7 @@ impl<Key: Eq + Hash + Clone> AlsoCache<Key, DefaultWeighter, ahash::RandomState>
         AlsoCache::with(size, Default::default(), Default::default())
     }
 
+    // TODO: remove estimated count - does not make much difference?
     pub fn default_with_estimated_count(estimated_items_count: usize, size: usize) -> Self {
         AlsoCache::with_estimated_count(
             estimated_items_count,
@@ -215,12 +216,12 @@ impl<Key: Eq + Hash + Clone> AlsoCache<Key, DefaultWeighter, ahash::RandomState>
 }
 
 #[inline(always)]
-pub fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeError> {
+fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeError> {
     bincode::serde::encode_to_vec(value, standard())
 }
 
 #[inline(always)]
-pub fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
+fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
     bincode::serde::decode_from_slice::<T, _>(bytes, standard()).map(|(res, _)| res)
 }
 
