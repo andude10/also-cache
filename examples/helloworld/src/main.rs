@@ -1,20 +1,44 @@
-use also_cache::cache::Cache;
+use also_cache::sync::AlsoCache;
 
 fn main() {
-    // let mut cache = Cache::new(64);
-    //pub fn new(size: usize, weighter: We, hash_builder: B) -> Self {
-    let cache = Cache::new(100);
+    // create a new cache with 1KB capacity
+    let cache = AlsoCache::default(1024);
 
-    println!("Hello, world!");
-    // let key = "hello";
-    // let value = b"world";
-    // cache.insert(key, value);
+    let key = "hello".to_string();
+    let value = "world";
 
-    // match cache.get(&key) {
-    //     Some(val) => match std::str::from_utf8(val) {
-    //         Ok(s) => println!("Value for key '{}': {}", key, s),
-    //         Err(_) => println!("Value for key '{}': <binary data>", key),
-    //     },
-    //     None => println!("Key '{}' not found in cache.", key),
-    // }
+    // Note: insert and get may return CacheError
+    match cache.insert(key.clone(), &value) {
+        Ok(()) => println!("Successfully inserted key '{}' with value '{}'", key, value),
+
+        // errors for insert
+        Err(e) => match e {
+            also_cache::InsertCacheError::Encode(err) => {
+                println!("Failed to encode value '{}': {:?}", value, err)
+            }
+            also_cache::InsertCacheError::Decode(err) => {
+                println!("Failed to decode value for key '{}': {:?}", key, err)
+            }
+        },
+    }
+
+    // retrieve the value
+    match cache.get::<String>(&key) {
+        Ok(retrieved_value) => println!("Retrieved value for key '{}': {}", key, retrieved_value),
+
+        // errors for get
+        Err(e) => match e {
+            also_cache::GetCacheError::Encode(err) => {
+                println!("Failed to encode value '{}': {:?}", value, err)
+            }
+            also_cache::GetCacheError::Decode(err) => {
+                println!("Failed to decode value for key '{}': {:?}", key, err)
+            }
+            also_cache::GetCacheError::KeyNotFound => {
+                println!("Key '{}' not found in cache", key)
+            }
+        },
+    }
+
+    println!("\nHello world example completed!");
 }

@@ -1,15 +1,20 @@
-# also-cache-rs (work in progress)
+# also-cache (work in progress)
 
-Low-overhead, low-latency replicated cache in Rust.
+A highly available replicated in-memory cache with high hit rates in Rust.
 
-For the specific cases when you need consistent cache with high hit rates.
+**WIP** This project is a work in progress, right now only local cache is implemented, without the distributed part.
+
+This cache is designed for scenarios where you want consistency and high hit rates in your distributed cluster. Instead of each node maintaining its own separate cache, all nodes send updates to each other, ensuring that frequently accessed data is available on all of them. It will also mean that cache will have (mostly) the same latency on each node.
+
+You can find usage examples in the [examples](./examples) directory, and performance benchmarks in the [benches](./benches) directory (run with `cargo bench` to execute them).
 
 Features:
 
-- (TODO) Peer-to-peer cache
+- (WIP) Peer-to-peer cache
 - Highly available
 - High hit rates (distributed S3-FIFO eviction strategy)
-- (TODO) Fast cache recovery after node startup
+- (WIP) Fast cache recovery after node startup
+- (WIP) TTL for cache entries
 
 Main goals:
 
@@ -17,38 +22,15 @@ Main goals:
 - Low overhead
 - Robustness and simplicity
 - Small dependency tree
-- Transparent API (inform the user of important implementation details)
+- Transparent API
 
-### Storage
+### Implementation
 
-Currently cache is stored as binary objects of arbitrary size, each allocated on the heap. I was thinking it might be a performance concern because of heap fragmentation and no cache-locality. If it is the problem, the best solution I think is to implement a custom allocator, although it will require switching to nightly Rust (https://github.com/rust-lang/rust/issues/32838).
-
-### P2P Concerns:
-
-Cache is not consistent, but maybe it's good enough? But idea of library is to provide small quick cache, and it means frequent updates, so inconsistency becomes a fatal problem.
-idea: initiate sync with database if node does not respond to heartbeat. Other recovery strategies.
-
-Q: How cache is kept consistent with database? (biggest problem btw)
-A: Each node is expected first to write to database, then to cache. (TODO) Cache entries can also have TTL, so eventually they will be consistent with database.
-
-Q: What if a node goes down?
-A: Each node sends heartbeat broadcasts to each node (TODO: improve with SWIM protocol?)
-
-Q: How other nodes know when new node joins cluster?
-A: New node sends heartbeat broadcast to all nodes, which then set it as alive (TODO: improve with SWIM protocol?).
-
-Q: What if node receives two cache updates for the same object?
-A: Each cache update has timestamp, the latest update wins (TODO: possible improvement: logical timestamps, Lamport Timestamps, some CRDTs)
-
-Q: What if node crashes before it sends cache update to other nodes?
-A: ¯\_(ツ)\_/¯ (maybe ensure broadcast is sent in each update/delete operations, but this introduces huge overhead?)
-
-Q: How new node loads cache at start-up?
-A: ¯\_(ツ)\_/¯
+Currently each cache entry is stored as raw bytes on the heap. It might be a performance concern because of many allocations and heap fragmentation.
 
 ### References
 
 The implementation is heavily inspired by:
 
-- [quick_cache](https://github.com/arthurprs/quick-cache)
-- [hiqlite](https://github.com/sebadob/hiqlite)
+- [quick_cache](https://github.com/arthurprs/quick-cache). Low-overhead in-memory cache in Rust.
+- [hiqlite](https://github.com/sebadob/hiqlite). Distributed SQLite + in-memory cache, implements Raft consensus algorithm which guarantees strong consistency.

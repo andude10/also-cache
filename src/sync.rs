@@ -14,8 +14,16 @@ pub const MAIN_THRESHOLD_RATIO: f64 = 0.9;
 pub const GHOST_THRESHOLD_RATIO: f64 = 0.5;
 pub const MIN_SHARD_SIZE: usize = 8192;
 
+// Maybe do not expose decode/encode errors to user?
+
 #[derive(Debug)]
-pub enum CacheError {
+pub enum InsertCacheError {
+    Decode(DecodeError),
+    Encode(EncodeError),
+}
+
+#[derive(Debug)]
+pub enum GetCacheError {
     Decode(DecodeError),
     Encode(EncodeError),
     KeyNotFound,
@@ -105,16 +113,16 @@ impl<Key: Eq + Hash + Clone, We: Weighter<Key>, B: BuildHasher + Clone> AlsoCach
     }
 
     #[inline(always)]
-    pub fn get<V: DeserializeOwned>(&self, key: &Key) -> Result<V, CacheError> {
+    pub fn get<V: DeserializeOwned>(&self, key: &Key) -> Result<V, GetCacheError> {
         let shard_idx = self.get_shard_index(key);
         let mut shard = self.shards[shard_idx].lock().unwrap();
-        let bytes = shard.get_bytes(key).ok_or(CacheError::KeyNotFound)?;
-        deserialize(bytes).map_err(CacheError::Decode)
+        let bytes = shard.get_bytes(key).ok_or(GetCacheError::KeyNotFound)?;
+        deserialize(bytes).map_err(GetCacheError::Decode)
     }
 
     #[inline(always)]
-    pub fn insert<V: Serialize>(&self, key: Key, val: &V) -> Result<(), CacheError> {
-        let bytes = serialize(val).map_err(CacheError::Encode)?;
+    pub fn insert<V: Serialize>(&self, key: Key, val: &V) -> Result<(), InsertCacheError> {
+        let bytes = serialize(val).map_err(InsertCacheError::Encode)?;
         let weight = self.weighter.weight(&key, &bytes);
         let shard_idx = self.get_shard_index(&key);
         let mut shard = self.shards[shard_idx].lock().unwrap();

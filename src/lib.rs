@@ -1,11 +1,13 @@
 pub mod cache_shard;
 pub mod sync;
 
+pub use sync::{AlsoCache, DefaultWeighter, GetCacheError, InsertCacheError, Weighter};
+
 #[cfg(test)]
 mod tests {
     use serde_derive::{Deserialize, Serialize};
 
-    use crate::sync::{AlsoCache, CacheError};
+    use crate::{GetCacheError, sync::AlsoCache};
 
     #[test]
     fn test_insert_get_delete() {
@@ -29,9 +31,9 @@ mod tests {
 
         let delete_res = cache.delete(&key1);
         assert_eq!(delete_res, true, "Delete should succeed");
-        let retrieved_after_delete: Result<String, CacheError> = cache.get(&key1);
+        let retrieved_after_delete: Result<String, GetCacheError> = cache.get(&key1);
         assert!(
-            matches!(retrieved_after_delete, Err(CacheError::KeyNotFound)),
+            matches!(retrieved_after_delete, Err(GetCacheError::KeyNotFound)),
             "Get after delete should fail for simple value"
         );
 
@@ -56,9 +58,9 @@ mod tests {
 
         let delete_res = cache.delete(&key2);
         assert_eq!(delete_res, true, "Delete should succeed");
-        let retrieved_after_delete: Result<String, CacheError> = cache.get(&key2);
+        let retrieved_after_delete: Result<String, GetCacheError> = cache.get(&key2);
         assert!(
-            matches!(retrieved_after_delete, Err(CacheError::KeyNotFound)),
+            matches!(retrieved_after_delete, Err(GetCacheError::KeyNotFound)),
             "Get after delete should fail for struct value"
         );
 
@@ -76,7 +78,7 @@ mod tests {
 
             for j in 0..50 {
                 let key = format!("key_{}", j);
-                let _: Result<String, CacheError> = cache.get(&key);
+                let _: Result<String, GetCacheError> = cache.get(&key);
             }
         }
 
@@ -125,7 +127,7 @@ mod tests {
         for _ in 0..3 {
             for i in 0..100 {
                 let key = format!("delete_key_{}", i);
-                let _: Result<String, CacheError> = cache.get(&key);
+                let _: Result<String, GetCacheError> = cache.get(&key);
             }
         }
 
@@ -146,9 +148,9 @@ mod tests {
         // verify deleted items are no longer accessible
         for i in (0..num_items).step_by(2) {
             let key = format!("delete_key_{}", i);
-            let result: Result<String, CacheError> = cache.get(&key);
+            let result: Result<String, GetCacheError> = cache.get(&key);
             assert!(
-                matches!(result, Err(CacheError::KeyNotFound)),
+                matches!(result, Err(GetCacheError::KeyNotFound)),
                 "Deleted key {} should not be found",
                 key
             );
@@ -234,9 +236,9 @@ mod tests {
         }
 
         cache.delete(&test_keys[1]);
-        let result: Result<String, CacheError> = cache.get(&test_keys[1]);
+        let result: Result<String, GetCacheError> = cache.get(&test_keys[1]);
         assert!(
-            matches!(result, Err(CacheError::KeyNotFound)),
+            matches!(result, Err(GetCacheError::KeyNotFound)),
             "Deleted key should not be found"
         );
 
