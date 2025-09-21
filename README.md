@@ -6,11 +6,6 @@ A highly available replicated in-memory cache with high hit rates in Rust.
 
 This cache is designed for scenarios where you want consistency and high hit rates in your distributed cluster. Instead of each node maintaining its own separate cache, all nodes send updates to each other, ensuring that frequently accessed data is available on all of them. It will also mean that cache will have (mostly) the same latency on each node.
 
-### Getting started
-
-- [examples](./examples) directory of this repo
-- [benches](./benches) performance benchmarks (run with `cargo bench`).
-
 Features:
 
 - (WIP) Peer-to-peer cache
@@ -26,6 +21,11 @@ Main goals:
 - Robustness and simplicity
 - Small dependency tree
 - Transparent API
+
+### Getting started
+
+- [examples](./examples) directory of this repo
+- [benches](./benches) performance benchmarks (run with `cargo bench`).
 
 ### Implementation
 
