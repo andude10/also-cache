@@ -18,7 +18,7 @@ struct Node {
     weight: u64,
 
     // single cache shard would never have more than 2^32 nodes,
-    // so we use u32 for indexes to reduce memory usage a little
+    // so we use u32 for indexes to reduce memory usage a little bit
     next: u32,
     prev: u32,
 
@@ -35,8 +35,8 @@ pub struct CacheShard<Key, B> {
     nodes: Vec<Node>,
     freelist: Vec<NodeRef<NoQueue, Free>>,
 
-    // if size of queue is more then threshold, next
-    // insert will cause eviction in that queue
+    // if size of queue is more then threshold, than
+    // next insert will cause eviction in that queue
     small_size: u64,
     main_size: u64,
     ghost_size: u64,
@@ -156,7 +156,11 @@ impl<Key: Eq + Hash, B: BuildHasher> CacheShard<Key, B> {
         if self.nodes[idx].freq < 3 {
             self.nodes[idx].freq += 1;
         }
-        (!self.nodes[idx].data.is_empty()).then_some(&self.nodes[idx].data)
+        if !self.nodes[idx].data.is_empty() {
+            Some(&self.nodes[idx].data)
+        } else {
+            None
+        }
     }
 
     /// Inserts or updates a cache entry by key.
@@ -177,7 +181,7 @@ impl<Key: Eq + Hash, B: BuildHasher> CacheShard<Key, B> {
             match self.nodes[idx].queue {
                 QueueTypeId::Small => self.small_size += weight_diff,
                 QueueTypeId::Main => self.main_size += weight_diff,
-                QueueTypeId::Ghost => self.main_size += weight_diff,
+                QueueTypeId::Ghost => self.ghost_size += weight_diff,
                 QueueTypeId::NoQueue => {}
             }
             self.nodes[idx].data = data;

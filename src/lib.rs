@@ -1,11 +1,11 @@
-pub mod cache;
 pub mod cache_shard;
+pub mod sync;
 
 #[cfg(test)]
 mod tests {
     use serde_derive::{Deserialize, Serialize};
 
-    use crate::cache::{AlsoCache, CacheError};
+    use crate::sync::{AlsoCache, CacheError};
 
     #[test]
     fn test_insert_get_delete() {

@@ -1,4 +1,4 @@
-// This benchmark borrowed from `quick_cache` crate
+// This benchmark is borrowed from `quick_cache` crate
 // https://github.com/arthurprs/quick-cache/blob/master/benches/benchmarks.rs
 
 use std::mem;
@@ -8,8 +8,7 @@ use rand::prelude::*;
 
 use rand_distr::Zipf;
 
-// Import our cache implementation
-use also_cache::cache::AlsoCache;
+use also_cache::sync::AlsoCache;
 
 pub fn r_benchmark(c: &mut Criterion) {
     const N_SAMPLES: usize = 1_000;
