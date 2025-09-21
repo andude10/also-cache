@@ -1,12 +1,15 @@
-# also-cache (work in progress)
+# also-cache
 
 A highly available replicated in-memory cache with high hit rates in Rust.
 
-**WIP** This project is a work in progress, right now only local cache is implemented, without the distributed part.
+**WIP**. Right now only local cache is implemented, without the distributed part.
 
 This cache is designed for scenarios where you want consistency and high hit rates in your distributed cluster. Instead of each node maintaining its own separate cache, all nodes send updates to each other, ensuring that frequently accessed data is available on all of them. It will also mean that cache will have (mostly) the same latency on each node.
 
-You can find usage examples in the [examples](./examples) directory, and performance benchmarks in the [benches](./benches) directory (run with `cargo bench` to execute them).
+### Getting started
+
+- [examples](./examples) directory of this repo
+- [benches](./benches) performance benchmarks (run with `cargo bench`).
 
 Features:
 
