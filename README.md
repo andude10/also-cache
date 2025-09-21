@@ -4,7 +4,7 @@ A highly available replicated in-memory cache with high hit rates in Rust.
 
 **WIP**. Right now only local cache is implemented, without the distributed part.
 
-This cache is designed for scenarios where you want consistency and high hit rates in your distributed cluster. Instead of each node maintaining its own separate cache, all nodes send updates to each other, ensuring that frequently accessed data is available on all of them. It will also mean that cache will have (mostly) the same latency on each node.
+This cache is designed for scenarios where you want consistency and high hit rates across your distributed cluster. Rather than having each node maintain its own isolated cache, all nodes share cache updates with one another, ensuring that popular data is available throughout the entire cluster. This means that cache will have (mostly) the same latency everywhere.
 
 Features:
 
