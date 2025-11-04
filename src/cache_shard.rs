@@ -26,6 +26,55 @@ struct Node {
     queue: QueueTypeId,
 }
 
+// This represents a reference to a node in a CacheShard. Nodes can be in different states:
+// occupied or free, and part of some queue or not. To make node management easier and safer,
+// NodeRef uses phantom types to track the assumed state of the node at compile time.
+//
+// So for example, if a function takes `ref: NodeRef<NoQueue, Occupied>`, it means this function
+// assumes that node in `nodes[ref.idx]` is not part of any queue and is occupied (not freed).
+//
+// Q: Queue type - SmallQueue, MainQueue, GhostQueue, or NoQueue if not in any queue
+// H: Node state - Occupied (has data) or Free (available for reuse)
+#[derive(Debug)]
+pub struct NodeRef<Q, H> {
+    idx: u32,
+    _occupied: PhantomData<H>,
+    _queue: PhantomData<Q>,
+}
+
+// Type-level markers for NodeRef
+#[derive(Debug, Clone, Copy)]
+struct SmallQueue;
+#[derive(Debug, Clone, Copy)]
+struct MainQueue;
+#[derive(Debug, Clone, Copy)]
+struct GhostQueue;
+#[derive(Debug, Clone, Copy)]
+struct NoQueue;
+#[derive(Debug, Clone, Copy)]
+struct Occupied;
+#[derive(Debug, Clone, Copy)]
+struct Free;
+
+trait QueueWithMembers {
+    const QUEUE_ID: QueueTypeId;
+}
+impl QueueWithMembers for SmallQueue {
+    const QUEUE_ID: QueueTypeId = QueueTypeId::Small;
+}
+impl QueueWithMembers for MainQueue {
+    const QUEUE_ID: QueueTypeId = QueueTypeId::Main;
+}
+impl QueueWithMembers for GhostQueue {
+    const QUEUE_ID: QueueTypeId = QueueTypeId::Ghost;
+}
+
+#[derive(Debug)]
+enum QueueHead<Q> {
+    Some(NodeRef<Q, Occupied>),
+    None,
+}
+
 #[derive(Debug)]
 pub struct CacheShard<Key, B> {
     map: HashTable<u32>,
@@ -47,57 +96,6 @@ pub struct CacheShard<Key, B> {
     small_head: QueueHead<SmallQueue>,
     main_head: QueueHead<MainQueue>,
     ghost_head: QueueHead<GhostQueue>,
-}
-
-// This represents a reference to a node in a Vec<Node>. Nodes can be in different states:
-// occupied or free, and part of some queue or not. To make node management easier and safer,
-// NodeRef uses phantom types to track the assumed state of the node at compile time.
-//
-// So for example, if a function takes NodeRef<NoQueue, Occupied>, it means that function
-// assumes that this node is not part of any queue and is occupied (not freed).
-//
-// Q: Queue type - SmallQueue, MainQueue, GhostQueue, or NoQueue if not in any queue
-// H: Node state - Occupied (has data) or Free (available for reuse)
-#[derive(Debug)]
-pub struct NodeRef<Q, H> {
-    idx: u32,
-    _occupied: PhantomData<H>,
-    _queue: PhantomData<Q>,
-}
-
-// Type-level markers for NodeRef
-#[derive(Debug, Clone, Copy)]
-struct SmallQueue;
-#[derive(Debug, Clone, Copy)]
-struct MainQueue;
-#[derive(Debug, Clone, Copy)]
-struct GhostQueue;
-#[derive(Debug, Clone, Copy)]
-struct NoQueue;
-
-// Type-level markers for NodeRef
-#[derive(Debug, Clone, Copy)]
-struct Occupied;
-#[derive(Debug, Clone, Copy)]
-struct Free;
-
-#[derive(Debug)]
-enum QueueHead<Q> {
-    Some(NodeRef<Q, Occupied>),
-    None,
-}
-
-trait QueueWithMembers {
-    const QUEUE_ID: QueueTypeId;
-}
-impl QueueWithMembers for SmallQueue {
-    const QUEUE_ID: QueueTypeId = QueueTypeId::Small;
-}
-impl QueueWithMembers for MainQueue {
-    const QUEUE_ID: QueueTypeId = QueueTypeId::Main;
-}
-impl QueueWithMembers for GhostQueue {
-    const QUEUE_ID: QueueTypeId = QueueTypeId::Ghost;
 }
 
 impl<Key: Eq + Hash, B: BuildHasher> CacheShard<Key, B> {
