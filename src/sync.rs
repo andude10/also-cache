@@ -154,9 +154,9 @@ impl<Key: Eq + Hash + Clone, We: Weighter<Key>, B: BuildHasher + Clone> AlsoCach
         println!("=== Shard Utilization Analysis ===");
         for (i, shard) in self.shards.iter().enumerate() {
             let shard = shard.lock().unwrap();
-            let small_count = shard.get_small_size();
-            let main_count = shard.get_main_size();
-            let ghost_count = shard.get_ghost_size();
+            let small_count = shard.small_size;
+            let main_count = shard.main_size;
+            let ghost_count = shard.ghost_size;
 
             if small_count + main_count + ghost_count > 0 {
                 println!(
@@ -194,11 +194,11 @@ impl<Key: Eq + Hash + Clone, We: Weighter<Key>, B: BuildHasher + Clone> AlsoCach
 
         for shard in &self.shards {
             let shard = shard.lock().unwrap();
-            total_small += shard.get_small_size();
-            total_main += shard.get_main_size();
-            total_ghost += shard.get_ghost_size();
+            total_small += shard.small_size;
+            total_main += shard.main_size;
+            total_ghost += shard.ghost_size;
 
-            if shard.get_small_size() + shard.get_main_size() + shard.get_ghost_size() > 0 {
+            if shard.small_size + shard.main_size + shard.ghost_size > 0 {
                 non_empty_shards += 1;
             }
         }

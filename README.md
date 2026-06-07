@@ -36,4 +36,4 @@ Currently each cache entry is stored as raw bytes on the heap. It might be a per
 The implementation is heavily inspired by:
 
 - [quick_cache](https://github.com/arthurprs/quick-cache). Low-overhead in-memory cache in Rust.
-- [hiqlite](https://github.com/sebadob/hiqlite). Distributed SQLite + in-memory cache, implements Raft consensus algorithm which guarantees strong consistency.
+- [hiqlite](https://github.com/sebadob/hiqlite). Embeddable replicated SQLite, implements Raft consensus algorithm which guarantees strong consistency.

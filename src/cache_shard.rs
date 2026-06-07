@@ -86,9 +86,9 @@ pub struct CacheShard<Key, B> {
 
     // if size of queue is more then threshold, than
     // next insert will cause eviction in that queue
-    small_size: u64,
-    main_size: u64,
-    ghost_size: u64,
+    pub(crate) small_size: u64,
+    pub(crate) main_size: u64,
+    pub(crate) ghost_size: u64,
     small_threshold: u64,
     main_threshold: u64,
     ghost_threshold: u64,
@@ -374,18 +374,6 @@ impl<Key: Eq + Hash, B: BuildHasher> CacheShard<Key, B> {
         self.print_queue("Small", &self.small_head, truncate_count);
         self.print_queue("Main", &self.main_head, truncate_count);
         self.print_queue("Ghost", &self.ghost_head, truncate_count);
-    }
-
-    pub fn get_small_size(&self) -> u64 {
-        self.small_size
-    }
-
-    pub fn get_main_size(&self) -> u64 {
-        self.main_size
-    }
-
-    pub fn get_ghost_size(&self) -> u64 {
-        self.ghost_size
     }
 
     fn print_queue(
